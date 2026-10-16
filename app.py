@@ -85,10 +85,3 @@ else:
             "平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
             "胜率": st.column_config.NumberColumn(format="%.1f%%")})
         st.caption("固定 Delta 0.5 · 200 美元/张 · 每分钟损耗 1 美元 · 往返手续费 2 美元")
-        with st.expander("数据与回测说明"):
-            st.write("固定 Delta 情景模拟，不是真实期权报价回测。净收益率按每张 $200 初始权利金计算，已扣时间损耗和往返手续费。")
-            st.write("每种卖出方法独立持仓，持仓期间忽略重复信号，因此交易次数可能不同。收盘前退出，不隔夜；未计滑点。")
-            st.markdown(f"数据来源：[SPY-Analysis]({source['repository']}) · {source['dataset']}")
-            st.caption(f"回测 #{run['id']} · {run['created_at']} · 数据 SHA256：{source['actual_sha256']}")
-            st.download_button("下载逐笔交易", pd.DataFrame(run["trades"]).to_csv(index=False),
-                               file_name=f"{selected}-trades.csv", mime="text/csv")
