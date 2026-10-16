@@ -24,7 +24,7 @@ def test_create_edit_pending_and_navigation(tmp_path, monkeypatch):
     assert not app.exception
     edited = next(x for x in store.ideas() if x["id"] == created["id"])
     assert edited["version"] == 2 and not edited["realize"]
-    app.radio[0].set_value("实现").run()
+    app.radio[0].set_value("想法库").run()
     assert not app.exception and len(app.dataframe) == 1
     app.radio[0].set_value("结果").run()
     assert len(app.selectbox) == 1 and not app.exception

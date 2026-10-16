@@ -2,7 +2,6 @@ import pandas as pd
 import streamlit as st
 
 import store
-from engine import run_pending
 
 st.set_page_config(page_title="Z-day-trading", page_icon="↗", layout="centered")
 st.markdown("""<style>
@@ -16,7 +15,7 @@ h3 {font-size: 1.15rem !important;}
 </style>""", unsafe_allow_html=True)
 store.initialize()
 st.title("Z-day-trading")
-page = st.radio("导航", ["结果", "想法", "实现"], horizontal=True, label_visibility="collapsed")
+page = st.radio("导航", ["结果", "想法", "想法库"], horizontal=True, label_visibility="collapsed")
 items = store.ideas()
 buys = [x for x in items if x["kind"] == "buy"]
 sells = [x for x in items if x["kind"] == "sell"]
@@ -46,34 +45,16 @@ if page == "想法":
     if item:
         st.caption(f"版本 {item['version']} · {'已实现' if item['realize'] else '待实现'}")
 
-elif page == "实现":
-    pending = [x for x in items if not x["realize"]]
-    st.subheader(f"待实现 · {len(pending)}")
-    st.caption("保存后直接告诉 Codex：实现并回测待处理想法。无需 API。")
-    if pending:
-        st.dataframe(pd.DataFrame([{"名称": x["name"], "类型": "买入" if x["kind"] == "buy" else "卖出",
-                                    "状态": "可回测" if store.ready(x) else "待 Codex 实现"} for x in pending]),
-                     hide_index=True, width="stretch")
-        can_run = any(not x["realize"] and store.ready(x) for x in buys) and bool(sells) and all(store.ready(x) for x in sells)
-        if st.button("回测已实现规则", type="primary", disabled=not can_run):
-            try:
-                with st.spinner("正在回测…"):
-                    result = run_pending()
-                st.session_state["run_notice"] = result
-                st.rerun()
-            except (ValueError, OSError) as exc:
-                st.error(str(exc))
-    else:
-        st.info("全部想法已实现。")
-    if "run_notice" in st.session_state:
-        result = st.session_state.pop("run_notice")
-        if result["completed"]:
-            st.success(f"已完成 {len(result['completed'])} 个买入想法，结果已保存。")
-        for error in result["errors"]:
-            st.warning(error)
-    for x in pending:
-        if x.get("error"):
-            st.caption(f"{x['name']}：{x['error']}")
+elif page == "想法库":
+    st.dataframe(
+        pd.DataFrame([
+            {"名称": x["name"],
+             "类型": "买入" if x["kind"] == "buy" else "卖出",
+             "状态": "已实现" if x["realize"] else "待实现"}
+            for x in items
+        ], columns=["名称", "类型", "状态"]),
+        hide_index=True, width="stretch",
+    )
 
 else:
     if not buys:
@@ -86,7 +67,7 @@ else:
     run = store.latest(selected)
     fresh = run and buy["realize"] and all(x["realize"] for x in sells) and run["signature"] == store.signature(buy, sells)
     if not run:
-        st.info("这个想法尚无回测结果。请到「实现」查看进度。")
+        st.info("这个想法尚无回测结果。请到「想法库」查看状态。")
     elif not fresh:
         st.info("想法或卖出方法已更新，等待重新实现和回测。")
         with st.expander("上一版本结果"):
