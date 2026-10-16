@@ -1,0 +1,113 @@
+import pandas as pd
+import streamlit as st
+
+import store
+from engine import run_pending
+
+st.set_page_config(page_title="Z-day-trading", page_icon="↗", layout="centered")
+st.markdown("""<style>
+.block-container {max-width: 920px; padding-top: 2.5rem;}
+h1 {font-size: 1.8rem !important; letter-spacing: -.04em;}
+h3 {font-size: 1.15rem !important;}
+[data-testid="stHeader"] {background: transparent;}
+#MainMenu, footer {visibility: hidden;}
+[data-testid="stAppDeployButton"] {display: none;}
+[data-testid="stDataFrame"] {border-radius: 10px;}
+</style>""", unsafe_allow_html=True)
+store.initialize()
+st.title("Z-day-trading")
+page = st.radio("导航", ["结果", "想法", "实现"], horizontal=True, label_visibility="collapsed")
+items = store.ideas()
+buys = [x for x in items if x["kind"] == "buy"]
+sells = [x for x in items if x["kind"] == "sell"]
+
+if page == "想法":
+    kind_label = st.radio("想法类型", ["买入想法", "卖出方法"], horizontal=True, label_visibility="collapsed")
+    kind = "buy" if kind_label == "买入想法" else "sell"
+    choices = [x for x in items if x["kind"] == kind]
+    lookup = {x["id"]: x for x in choices}
+    selected = st.selectbox("选择想法", ["new", *lookup],
+                            format_func=lambda key: "＋ 新建" if key == "new" else lookup[key]["name"])
+    item = lookup.get(selected)
+    with st.form(f"edit_{selected}_{item['updated_at'] if item else 'new'}", clear_on_submit=False):
+        name = st.text_input("名称", value=item["name"] if item else "", max_chars=120)
+        description = st.text_area("Description", value=item["description"] if item else "", height=140)
+        reset = st.checkbox("重新实现（realize = false）") if item else False
+        if st.form_submit_button("保存", type="primary"):
+            try:
+                store.save(kind, name, description, selected if item else None, reset,
+                           expected_updated_at=item["updated_at"] if item else None)
+                st.session_state["notice"] = "已保存。修改描述后会等待重新实现。"
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+    if st.session_state.get("notice"):
+        st.success(st.session_state.pop("notice"))
+    if item:
+        st.caption(f"版本 {item['version']} · {'已实现' if item['realize'] else '待实现'}")
+
+elif page == "实现":
+    pending = [x for x in items if not x["realize"]]
+    st.subheader(f"待实现 · {len(pending)}")
+    st.caption("保存后直接告诉 Codex：实现并回测待处理想法。无需 API。")
+    if pending:
+        st.dataframe(pd.DataFrame([{"名称": x["name"], "类型": "买入" if x["kind"] == "buy" else "卖出",
+                                    "状态": "可回测" if store.ready(x) else "待 Codex 实现"} for x in pending]),
+                     hide_index=True, width="stretch")
+        can_run = any(not x["realize"] and store.ready(x) for x in buys) and bool(sells) and all(store.ready(x) for x in sells)
+        if st.button("回测已实现规则", type="primary", disabled=not can_run):
+            try:
+                with st.spinner("正在回测…"):
+                    result = run_pending()
+                st.session_state["run_notice"] = result
+                st.rerun()
+            except (ValueError, OSError) as exc:
+                st.error(str(exc))
+    else:
+        st.info("全部想法已实现。")
+    if "run_notice" in st.session_state:
+        result = st.session_state.pop("run_notice")
+        if result["completed"]:
+            st.success(f"已完成 {len(result['completed'])} 个买入想法，结果已保存。")
+        for error in result["errors"]:
+            st.warning(error)
+    for x in pending:
+        if x.get("error"):
+            st.caption(f"{x['name']}：{x['error']}")
+
+else:
+    if not buys:
+        st.info("先在「想法」中保存一个买入想法。")
+        st.stop()
+    lookup = {x["id"]: x for x in buys}
+    selected = st.selectbox("买入想法", list(lookup), format_func=lambda key: lookup[key]["name"])
+    buy = lookup[selected]
+    st.write(buy["description"])
+    run = store.latest(selected)
+    fresh = run and buy["realize"] and all(x["realize"] for x in sells) and run["signature"] == store.signature(buy, sells)
+    if not run:
+        st.info("这个想法尚无回测结果。请到「实现」查看进度。")
+    elif not fresh:
+        st.info("想法或卖出方法已更新，等待重新实现和回测。")
+        with st.expander("上一版本结果"):
+            st.caption(run["snapshot"]["buy"]["description"])
+            st.dataframe(pd.DataFrame(run["summary"])[["name", "mean_return", "win_rate", "trades"]], hide_index=True)
+    else:
+        source = run["source"]
+        st.caption(f"SPY · 1 分钟 · {source['start'][:10]} — {source['end'][:10]} · Nasdaq 单一场所行情")
+        names = {x["id"]: x["name"] for x in sells}
+        table = pd.DataFrame([{"卖出方法": names.get(x["sell_id"], x["name"]),
+                               "平均净收益率": None if x["mean_return"] is None else x["mean_return"] * 100,
+                               "胜率": None if x["win_rate"] is None else x["win_rate"] * 100,
+                               "交易次数": x["trades"]} for x in run["summary"]])
+        st.dataframe(table, hide_index=True, width="stretch", column_config={
+            "平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
+            "胜率": st.column_config.NumberColumn(format="%.1f%%")})
+        st.caption("固定 Delta 0.5 · 200 美元/张 · 每分钟损耗 1 美元 · 往返手续费 2 美元")
+        with st.expander("数据与回测说明"):
+            st.write("固定 Delta 情景模拟，不是真实期权报价回测。净收益率按每张 $200 初始权利金计算，已扣时间损耗和往返手续费。")
+            st.write("每种卖出方法独立持仓，持仓期间忽略重复信号，因此交易次数可能不同。收盘前退出，不隔夜；未计滑点。")
+            st.markdown(f"数据来源：[SPY-Analysis]({source['repository']}) · {source['dataset']}")
+            st.caption(f"回测 #{run['id']} · {run['created_at']} · 数据 SHA256：{source['actual_sha256']}")
+            st.download_button("下载逐笔交易", pd.DataFrame(run["trades"]).to_csv(index=False),
+                               file_name=f"{selected}-trades.csv", mime="text/csv")

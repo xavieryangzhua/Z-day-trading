@@ -1,0 +1,10 @@
+[
+  {"id":"vwap_close","kind":"buy","name":"VWAP 突破 · 收盘确认","description":"第一根突破 VWAP（开盘在线下或前一根收盘在线下，且本根收盘在线上），第二根收盘仍在 VWAP 上方，第三根开盘买入 Call。","implementation":{"type":"breakout","indicator":"vwap","confirmation":"close"}},
+  {"id":"ema20_close","kind":"buy","name":"EMA20 突破 · 收盘确认","description":"第一根突破 EMA20（开盘在线下或前一根收盘在线下，且本根收盘在线上），第二根收盘仍在 EMA20 上方，第三根开盘买入 Call。","implementation":{"type":"breakout","indicator":"ema20","confirmation":"close"}},
+  {"id":"vwap_body","kind":"buy","name":"VWAP 突破 · 实体确认","description":"第一根突破 VWAP（开盘在线下或前一根收盘在线下，且本根收盘在线上），第二根开盘和收盘都在 VWAP 上方，第三根开盘买入 Call。开盘和收盘均与第二根收盘后确定的 VWAP 比较。","implementation":{"type":"breakout","indicator":"vwap","confirmation":"body"}},
+  {"id":"hold_1","kind":"sell","name":"持有 1 分钟","description":"买入后持有 1 分钟卖出，按对应分钟收盘价成交；不隔夜。","implementation":{"type":"fixed","minutes":1}},
+  {"id":"hold_5","kind":"sell","name":"持有 5 分钟","description":"买入后持有 5 分钟卖出，按对应分钟收盘价成交；不隔夜。","implementation":{"type":"fixed","minutes":5}},
+  {"id":"hold_10","kind":"sell","name":"持有 10 分钟","description":"买入后持有 10 分钟卖出，按对应分钟收盘价成交；不隔夜。","implementation":{"type":"fixed","minutes":10}},
+  {"id":"hold_30","kind":"sell","name":"持有 30 分钟","description":"买入后持有 30 分钟卖出，按对应分钟收盘价成交；不隔夜。","implementation":{"type":"fixed","minutes":30}},
+  {"id":"two_green","kind":"sell","name":"连续两根阳线","description":"从买入所在 K 线开始计数，连续两根收盘高于开盘的阳线确认后，下一根开盘卖出。未触发时在当天最后一根收盘卖出，不隔夜。","implementation":{"type":"two_green"}}
+]
