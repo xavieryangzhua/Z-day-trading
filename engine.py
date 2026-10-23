@@ -18,6 +18,10 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") == "three_bar_drop":
+            return
+        if rule.get("type") == "ema_pullback" and rule.get("period") in (5, 20):
+            return
         if rule.get("type") == "red_count":
             window, count = rule.get("window"), rule.get("count")
             if type(window) is int and type(count) is int and 1 <= count <= window <= 390:
@@ -28,6 +32,10 @@ def validate_rule(kind, rule):
         if rule.get("indicator") in ("vwap", "ema20") and rule.get("confirmation") in ("close", "body"):
             return
     if kind == "sell":
+        if rule.get("type") == "entry_gain" and rule.get("minutes") in (1, 3):
+            return
+        if rule.get("type") == "option_target_10":
+            return
         if rule.get("type") == "two_green":
             return
         if rule.get("type") == "fixed" and type(rule.get("minutes")) is int and 1 <= rule["minutes"] <= 390:
@@ -63,6 +71,7 @@ def load_data(path=DATA):
     bars["vwap"] = (typical * bars.volume).groupby(groups).cumsum() / bars.volume.groupby(groups).cumsum().replace(0, np.nan)
     # EMA carries across regular sessions; overnight/premarket bars are excluded.
     bars["ema20"] = bars.close.ewm(span=20, adjust=False, min_periods=20).mean()
+    bars["ema5"] = bars.close.ewm(span=5, adjust=False, min_periods=5).mean()
     metadata = json.loads((store.ROOT / "data/source.json").read_text())
     actual_hash = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     if actual_hash != metadata["sha256"]:
@@ -74,6 +83,16 @@ def load_data(path=DATA):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] == "three_bar_drop":
+        signal = day.open.shift(2) - day.close > 3.0
+        return signal.shift(1, fill_value=False).to_numpy()
+    if rule["type"] == "ema_pullback":
+        line = day[f"ema{rule['period']}"]
+        prior_above = (day.close > line).shift(1).rolling(5).sum() == 5
+        # Tiny tolerance only for binary floating-point representation of $0.10.
+        near = (day.close - line).abs() <= 0.10 + 1e-10
+        signal = prior_above & (day.close < day.open) & near
+        return signal.shift(1, fill_value=False).to_numpy()
     if rule["type"] == "red_count":
         # Count completed candles only; every qualifying rolling window is a
         # signal, with overlapping positions filtered by the execution loop.
@@ -95,7 +114,21 @@ def entry_signals(day, rule):
 
 
 def exit_trade(day, entry, rule):
+    validate_rule("sell", rule)
     last = len(day) - 1
+    if rule["type"] == "entry_gain":
+        target = entry + rule["minutes"] - 1
+        if target <= last and day.close.iloc[target] - day.open.iloc[entry] > 0.25:
+            return target, float(day.close.iloc[target]), day.index[target] + pd.Timedelta(minutes=1), "entry_gain"
+        return last, float(day.close.iloc[last]), day.index[last] + pd.Timedelta(minutes=1), "session_close"
+    if rule["type"] == "option_target_10":
+        limit = min(entry + 9, last)
+        for i in range(entry, limit + 1):
+            quote, _, _ = calculate_trade(float(day.open.iloc[entry]), float(day.close.iloc[i]), i - entry + 1)
+            if quote > 2.50 + 1e-10:
+                return i, float(day.close.iloc[i]), day.index[i] + pd.Timedelta(minutes=1), "option_target"
+        reason = "timeout_10" if entry + 9 <= last else "session_close"
+        return limit, float(day.close.iloc[limit]), day.index[limit] + pd.Timedelta(minutes=1), reason
     if rule["type"] == "fixed":
         target = entry + rule["minutes"] - 1
         index = min(target, last)
