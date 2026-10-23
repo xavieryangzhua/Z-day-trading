@@ -20,7 +20,7 @@ h3 {font-size: 1.15rem !important;}
 </style>""", unsafe_allow_html=True)
 store.initialize()
 st.title("Z-day-trading")
-page = st.radio("导航", ["结果", "想法", "想法库", "排名"], horizontal=True, label_visibility="collapsed")
+page = st.radio("导航", ["结果", "想法", "想法库", "排名", "个股排名"], horizontal=True, label_visibility="collapsed")
 items = store.ideas()
 buys = [x for x in items if x["kind"] == "buy"]
 sells = [x for x in items if x["kind"] == "sell"]
@@ -60,6 +60,27 @@ elif page == "想法库":
         ], columns=["名称", "类型", "状态"]),
         hide_index=True, width="stretch",
     )
+
+elif page == "个股排名":
+    import equities
+    st.caption("2026/10/05—10/16 · 10个交易日 · FirstRate拆股复权1分钟样本")
+    symbol = st.selectbox("股票", ["全部", *equities.SYMBOLS])
+    minimum = st.number_input("最少交易笔数", min_value=0, value=0, step=1)
+    rows = equities.ranking_rows(items)
+    if rows:
+        table = pd.DataFrame(rows)
+        if symbol != "全部":
+            table = table[table["股票"] == symbol]
+        table = table[table["笔数"] >= minimum]
+        table = table.sort_values("平均净收益率", ascending=False, kind="stable", na_position="last").reset_index(drop=True)
+        table.insert(0, "排名", range(1, len(table)+1))
+        st.dataframe(table, hide_index=True, width="stretch", height=600,
+                     column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
+                                    "胜率": st.column_config.NumberColumn(format="%.1f%%")})
+        st.caption("平均单笔净收益排序 · 固定Delta 0.5、$200/张、损耗$1/分钟、往返费$2；并非真实期权报价。不同股票沿用原规则的美元阈值。")
+        st.caption("预热不足：异常波动策略需要前14个交易日，当前只有10天；其他指标从样本起点预热。0笔不代表收益为0。")
+    else:
+        st.info("暂无有效个股结果，需完成回测；修改规则或数据后需重新运行。")
 
 elif page == "排名":
     rows = []
