@@ -18,6 +18,8 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") in ("ema20_angle_touch", "green2_touch") and rule.get("distance") in (0.05, 0.10):
+            return
         if rule.get("type") == "double_red_run":
             return
         if rule.get("type") == "large_green_pullback" and rule.get("dollars") in (2, 3):
@@ -98,6 +100,32 @@ def load_data(path=DATA):
     return bars, metadata
 
 
+def strict_near(distance, limit):
+    # Exclude mathematical equality despite binary floating-point rounding.
+    return (distance < limit) & ~np.isclose(distance, limit, rtol=0, atol=1e-10)
+
+
+def touch_entry_signals(day, rule):
+    limit = rule["distance"]
+    if rule["type"] == "ema20_angle_touch":
+        slope = (day.ema20 - day.ema20.shift(5)) / 5
+        threshold = np.tan(np.deg2rad(30))
+        rising = (slope > threshold) & ~np.isclose(slope, threshold, rtol=0, atol=1e-10)
+        signal = rising & (day.close < day.open) & strict_near((day.low-day.ema20).abs(), limit)
+        return signal.shift(1, fill_value=False).to_numpy()
+    result = np.zeros(len(day), dtype=bool)
+    for a in np.flatnonzero((day.close-day.open).to_numpy() > 2):
+        # First eligible touch after two or three bearish bars consumes the setup.
+        for k in (1, 2, 3):
+            b = a + k
+            if b + 1 >= len(day) or day.close.iloc[b] >= day.open.iloc[b]:
+                break
+            if k >= 2 and strict_near(abs(day.low.iloc[b]-day.ema5.iloc[b]), limit):
+                result[b+1] = True
+                break
+    return result
+
+
 def chart_entry_signals(day, rule):
     signals = np.zeros(len(day), dtype=bool)
     o, c = day.open.to_numpy(), day.close.to_numpy()
@@ -156,6 +184,8 @@ def platform_breakout_signals(day):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] in ("ema20_angle_touch", "green2_touch"):
+        return touch_entry_signals(day, rule)
     if rule["type"] in ("double_red_run", "large_green_pullback"):
         return chart_entry_signals(day, rule)
     if rule["type"] == "impulse_platform_breakout":
