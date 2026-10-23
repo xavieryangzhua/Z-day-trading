@@ -18,6 +18,10 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") == "trend_pullback" and rule.get("period") in (5, 20):
+            return
+        if rule.get("type") == "trend_high10":
+            return
         if rule.get("type") in ("three_bar_drop_2", "red_rebound_1"):
             return
         if rule.get("type") == "three_bar_drop":
@@ -87,6 +91,21 @@ def load_data(path=DATA):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] in ("trend_pullback", "trend_high10"):
+        rising = day.ema20 > day.ema20.shift(5)
+        if rule["type"] == "trend_high10":
+            above = (day.close > day.ema20).shift(1).rolling(10).sum() == 10
+            signal = rising & above & (day.close > day.open) & (day.close > day.ema20)
+            signal &= day.close > day.high.shift(1).rolling(10).max()
+        else:
+            line = day[f"ema{rule['period']}"]
+            above = ((day.close > day.ema20) & (day.close > line)).shift(1).rolling(5).sum() == 5
+            pullback = rising & above & (day.close < day.open)
+            pullback &= (day.low - line).abs() <= 0.10 + 1e-10
+            pullback &= (day.close >= line) & (day.close >= day.ema20)
+            signal = pullback.shift(1, fill_value=False) & rising & (day.close > day.open)
+            signal &= (day.close > day.high.shift(1)) & (day.close > line) & (day.close > day.ema20)
+        return signal.shift(1, fill_value=False).to_numpy()
     if rule["type"] == "three_bar_drop_2":
         signal = day.open.shift(2) - day.close > 2.0
         return signal.shift(1, fill_value=False).to_numpy()
