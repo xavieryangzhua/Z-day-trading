@@ -15,7 +15,7 @@ h3 {font-size: 1.15rem !important;}
 </style>""", unsafe_allow_html=True)
 store.initialize()
 st.title("Z-day-trading")
-page = st.radio("导航", ["结果", "想法", "想法库"], horizontal=True, label_visibility="collapsed")
+page = st.radio("导航", ["结果", "想法", "想法库", "排名"], horizontal=True, label_visibility="collapsed")
 items = store.ideas()
 buys = [x for x in items if x["kind"] == "buy"]
 sells = [x for x in items if x["kind"] == "sell"]
@@ -55,6 +55,29 @@ elif page == "想法库":
         ], columns=["名称", "类型", "状态"]),
         hide_index=True, width="stretch",
     )
+
+elif page == "排名":
+    rows = []
+    names = {x["id"]: x["name"] for x in sells}
+    for buy in buys:
+        run = store.latest(buy["id"])
+        if not (run and buy["realize"] and all(x["realize"] for x in sells)
+                and run["signature"] == store.signature(buy, sells)):
+            continue
+        for result in run["summary"]:
+            if result["mean_return"] is not None and result["trades"] > 0:
+                rows.append({"买入想法": buy["name"],
+                             "卖出方法": names.get(result["sell_id"], result["name"]),
+                             "平均净收益率": result["mean_return"] * 100,
+                             "笔数": result["trades"]})
+    if rows:
+        table = pd.DataFrame(rows).sort_values("平均净收益率", ascending=False, kind="stable").head(10).reset_index(drop=True)
+        table.insert(0, "排名", range(1, len(table) + 1))
+        st.dataframe(table, hide_index=True, width="stretch", height="content",
+                     column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%")})
+        st.caption("按最新有效回测的平均单笔净收益排序，已扣损耗和手续费；请结合笔数看结果。")
+    else:
+        st.info("暂无有效回测结果，完成回测后显示排名。")
 
 else:
     if not buys:

@@ -1,6 +1,6 @@
 # Z-day-trading
 
-保持页面简洁，只有「结果、想法、想法库」三个入口。不要自行增加图表、策略、指标或 API 集成。
+保持页面简洁，只有「结果、想法、想法库、排名」四个入口。不要自行增加图表、策略、指标或 API 集成。
 
 用户说“实现并回测”时：
 1. 使用 `.venv/bin/python manage.py pending` 读取 `storage/ideas.json` 中 realize=false 的条目。
