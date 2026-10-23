@@ -18,6 +18,8 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") in ("trend_vwap", "trend_sma50", "trend_price_blocks"):
+            return
         if rule.get("type") == "trend_pullback" and rule.get("period") in (5, 20):
             return
         if rule.get("type") == "trend_high10":
@@ -80,6 +82,7 @@ def load_data(path=DATA):
     # EMA carries across regular sessions; overnight/premarket bars are excluded.
     bars["ema20"] = bars.close.ewm(span=20, adjust=False, min_periods=20).mean()
     bars["ema5"] = bars.close.ewm(span=5, adjust=False, min_periods=5).mean()
+    bars["sma50"] = bars.close.rolling(50, min_periods=50).mean()
     metadata = json.loads((store.ROOT / "data/source.json").read_text())
     actual_hash = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     if actual_hash != metadata["sha256"]:
@@ -91,6 +94,29 @@ def load_data(path=DATA):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] == "trend_vwap":
+        line = day.vwap
+        rising = line > line.shift(5)
+        above = (day.close > line).shift(1).rolling(5).sum() == 5
+        pullback = above & rising & (day.close < day.open) & (day.close >= line)
+        pullback &= (day.low - line).abs() <= 0.10 + 1e-10
+        signal = pullback.shift(1, fill_value=False) & rising & (day.close > day.open)
+        signal &= (day.close > day.high.shift(1)) & (day.close > line)
+        return signal.shift(1, fill_value=False).to_numpy()
+    if rule["type"] == "trend_sma50":
+        line = day.sma50
+        above = (day.close > line).shift(1).rolling(5).sum() == 5
+        signal = above & (line > line.shift(10)) & (day.close > line) & (day.close > day.open)
+        signal &= day.close > day.high.shift(1).rolling(5).max()
+        return signal.shift(1, fill_value=False).to_numpy()
+    if rule["type"] == "trend_price_blocks":
+        # Three disjoint, completed five-bar blocks; no future swing pivot labels.
+        high = day.high.rolling(5).max()
+        low = day.low.rolling(5).min()
+        signal = (high > high.shift(5)) & (high.shift(5) > high.shift(10))
+        signal &= (low > low.shift(5)) & (low.shift(5) > low.shift(10))
+        signal &= (day.close > high.shift(5)) & (day.close > day.open)
+        return signal.shift(1, fill_value=False).to_numpy()
     if rule["type"] in ("trend_pullback", "trend_high10"):
         rising = day.ema20 > day.ema20.shift(5)
         if rule["type"] == "trend_high10":

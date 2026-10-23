@@ -20,7 +20,23 @@ def ema(n):
 def description(item):
  r=item['implementation']; validate_rule(item['kind'],r); t=r['type']; steps=[]
  if item['kind']=='buy':
-  if t=='trend_pullback':
+  if t=='trend_vwap':
+   steps=['VWAP从每个交易日09:30重置，按累计[(H+L+C)/3×volume]/累计volume计算，累计成交量为0则无效。它是分钟近似值；当前数据仅含Nasdaq单一场所，非全市场汇总成交量。',
+    '将回调根记为A。A之前连续5根当日分钟线的收盘必须严格高于各自VWAP；A的VWAP还必须严格高于5根前VWAP。',
+    'A要求阴线C_A<O_A，最低价满足abs(L_A−VWAP_A)≤0.10美元，收盘C_A≥VWAP_A。此处附近看最低价，不是收盘距离；等于边界允许。',
+    '紧接的B要求阳线C_B>O_B，C_B>H_A且C_B>VWAP_B，并且VWAP_B高于5根前VWAP。所有VWAP按相应K线收盘时计算。',
+    'B收盘确认后下一根开盘买入。B未确认则该形态取消；前置K线不足不触发。无需EMA20条件。']
+  elif t=='trend_sma50':
+   steps=['SMA50为最近50根正常交易时段1分钟收盘价的算术平均；至少50根才有效，跨交易日连续计算，不含盘前盘后，不使用指数加权。',
+    '当前信号根记为A；A之前5根当日K线收盘分别严格高于各自SMA50。A的SMA50严格高于当日10根之前的SMA50；缺少任何观察值则不触发。',
+    'A必须是阳线C_A>O_A，且C_A>SMA50_A；同时C_A严格高于之前5根最高价的最大值，不包含A本身。',
+    'A收盘确认后下一根开盘买入1张Call；无需EMA20条件。每分钟滚动重新检查，持仓期间忽略重复信号。']
+  elif t=='trend_price_blocks':
+   steps=['不使用均线或成交量。取当日最近15根已结束分钟K线，按时间顺序分成不重叠的3组A、B、C，每组5根。每分钟滚动更新一次分组。',
+    '分别计算每组的最高价HA/HB/HC=max(H)和最低价LA/LB/LC=min(L)。要求HA<HB<HC且LA<LB<LC，全部为严格不等式。代表三个五分钟观察区间的高点及低点同时抬高，不是利用未来K线标注波峰波谷。',
+    '最新一根即C组第5根还须为阳线，且该根收盘严格超过B组最高价HB。组内不要求所有K线都上涨。',
+    '最新一根收盘确认后，下一根开盘买入1张Call；当天不足15根不触发，观察组不跨日。']
+  elif t=='trend_pullback':
    n=r['period'];steps=[ema(20)]+([ema(5)] if n==5 else [])+[
     f'先判断回调根A：A之前连续5根已结束K线的收盘，必须分别严格高于各自EMA20和EMA{n}。所有这些K线属于同一交易日。',
     'A收盘时EMA20必须严格大于5根之前的EMA20，表示均线抬升；不是只因价格位于均线上方就算上升趋势。',
