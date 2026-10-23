@@ -18,6 +18,10 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if (rule.get("type") == "ema20_rise_range_touch"
+                and rule.get("rise") in (0.10, 0.20, 0.30)
+                and rule.get("distance") in (0.05, 0.10)):
+            return
         if rule.get("type") in ("ema20_angle_touch", "green2_touch") and rule.get("distance") in (0.05, 0.10):
             return
         if rule.get("type") == "double_red_run":
@@ -184,6 +188,15 @@ def platform_breakout_signals(day):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] == "ema20_rise_range_touch":
+        e = day.ema20
+        rising = (e > e.shift(1)) & (e.shift(1) > e.shift(2)) & (e.shift(2) > e.shift(3))
+        gain = e - e.shift(5)
+        enough = (gain >= rule["rise"]) | np.isclose(gain, rule["rise"], rtol=0, atol=1e-10)
+        distance = np.maximum(np.maximum(day.low - e, e - day.high), 0)
+        signal = rising & enough & (day.close < day.open) & (day.close >= e)
+        signal &= strict_near(distance, rule["distance"])
+        return signal.shift(1, fill_value=False).to_numpy()
     if rule["type"] in ("ema20_angle_touch", "green2_touch"):
         return touch_entry_signals(day, rule)
     if rule["type"] in ("double_red_run", "large_green_pullback"):
