@@ -99,3 +99,33 @@ def test_option_target_checks_close_and_decay_then_times_out():
     result = engine.exit_trade(frame, 0, {'type': 'option_target_10'})
     assert result[0] == 9 and result[3] == 'timeout_10'
     assert engine.exit_trade(frame.iloc[:5], 0, {'type': 'option_target_10'})[3] == 'session_close'
+
+
+def test_rebound_waits_for_confirmation_before_entry():
+    frame = bars([103,101,100,103], [101,100,102,104])
+    rule={'type':'red_rebound_1'}
+    assert not engine.entry_signals(frame,rule).any()
+    frame.loc[frame.index[1],'close']=102
+    assert np.flatnonzero(engine.entry_signals(frame,rule)).tolist()==[2]
+    frame.loc[frame.index[2],'close']=1
+    assert engine.entry_signals(frame,rule)[2]
+
+
+def test_drop_two_dollars_strict_and_shifted():
+    frame=bars([104,103,102,100],[103,102,102,100])
+    rule={'type':'three_bar_drop_2'}
+    assert not engine.entry_signals(frame,rule).any()
+    frame.loc[frame.index[2],'close']=101.5
+    assert np.flatnonzero(engine.entry_signals(frame,rule)).tolist()==[3]
+
+
+def test_bracket_stop_uses_decayed_quote_and_close_only():
+    frame=bars([100.0]*12,[100.0]*12)
+    frame['low']=0
+    frame.loc[frame.index[1],'close']=99.44 # quote=1.70 including decay
+    result=engine.exit_trade(frame,0,{'type':'option_bracket_10'})
+    assert result[0]==1 and result[3]=='option_stop'
+    frame['close']=100.0
+    assert engine.exit_trade(frame,0,{'type':'option_bracket_10'})[3]=='timeout_10'
+    frame.loc[frame.index[0],'close']=102.0
+    assert engine.exit_trade(frame,0,{'type':'option_bracket_10'})[3]=='option_target'

@@ -18,6 +18,8 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") in ("three_bar_drop_2", "red_rebound_1"):
+            return
         if rule.get("type") == "three_bar_drop":
             return
         if rule.get("type") == "ema_pullback" and rule.get("period") in (5, 20):
@@ -26,12 +28,14 @@ def validate_rule(kind, rule):
             window, count = rule.get("window"), rule.get("count")
             if type(window) is int and type(count) is int and 1 <= count <= window <= 390:
                 return
-        if rule.get("type") == "red_body" and rule.get("dollars") in (1, 2, 3):
+        if rule.get("type") == "red_body" and rule.get("dollars") in (1, 1.5, 2, 3):
             return
     if kind == "buy" and rule.get("type") == "breakout":
         if rule.get("indicator") in ("vwap", "ema20") and rule.get("confirmation") in ("close", "body"):
             return
     if kind == "sell":
+        if rule.get("type") == "option_bracket_10":
+            return
         if rule.get("type") == "entry_gain" and rule.get("minutes") in (1, 3):
             return
         if rule.get("type") == "option_target_10":
@@ -83,6 +87,13 @@ def load_data(path=DATA):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] == "three_bar_drop_2":
+        signal = day.open.shift(2) - day.close > 2.0
+        return signal.shift(1, fill_value=False).to_numpy()
+    if rule["type"] == "red_rebound_1":
+        dropped = (day.open - day.close > 1.0).shift(1, fill_value=False)
+        signal = dropped & (day.close > day.open) & (day.close > day.close.shift(1))
+        return signal.shift(1, fill_value=False).to_numpy()
     if rule["type"] == "three_bar_drop":
         signal = day.open.shift(2) - day.close > 3.0
         return signal.shift(1, fill_value=False).to_numpy()
@@ -121,12 +132,14 @@ def exit_trade(day, entry, rule):
         if target <= last and day.close.iloc[target] - day.open.iloc[entry] > 0.25:
             return target, float(day.close.iloc[target]), day.index[target] + pd.Timedelta(minutes=1), "entry_gain"
         return last, float(day.close.iloc[last]), day.index[last] + pd.Timedelta(minutes=1), "session_close"
-    if rule["type"] == "option_target_10":
+    if rule["type"] in ("option_target_10", "option_bracket_10"):
         limit = min(entry + 9, last)
         for i in range(entry, limit + 1):
             quote, _, _ = calculate_trade(float(day.open.iloc[entry]), float(day.close.iloc[i]), i - entry + 1)
             if quote > 2.50 + 1e-10:
                 return i, float(day.close.iloc[i]), day.index[i] + pd.Timedelta(minutes=1), "option_target"
+            if rule["type"] == "option_bracket_10" and quote <= 1.70 + 1e-10:
+                return i, float(day.close.iloc[i]), day.index[i] + pd.Timedelta(minutes=1), "option_stop"
         reason = "timeout_10" if entry + 9 <= last else "session_close"
         return limit, float(day.close.iloc[limit]), day.index[limit] + pd.Timedelta(minutes=1), reason
     if rule["type"] == "fixed":

@@ -71,17 +71,16 @@ elif page == "排名":
             continue
         wins = profit_counts(run)
         for result in run["summary"]:
-            if result["mean_return"] is not None and result["trades"] > 0:
-                rows.append({"买入想法": buy["name"],
+            rows.append({"买入想法": buy["name"],
                              "卖出方法": names.get(result["sell_id"], result["name"]),
-                             "平均净收益率": result["mean_return"] * 100,
-                             "胜率": wins[result["sell_id"]] / result["trades"] * 100,
+                             "平均净收益率": result["mean_return"] * 100 if result["mean_return"] is not None else None,
+                             "胜率": wins[result["sell_id"]] / result["trades"] * 100 if result["trades"] else None,
                              "盈利笔数": wins[result["sell_id"]],
                              "笔数": result["trades"]})
     if rows:
-        table = pd.DataFrame(rows).sort_values("平均净收益率", ascending=False, kind="stable").head(10).reset_index(drop=True)
+        table = pd.DataFrame(rows).sort_values("平均净收益率", ascending=False, kind="stable", na_position="last").reset_index(drop=True)
         table.insert(0, "排名", range(1, len(table) + 1))
-        st.dataframe(table, hide_index=True, width="stretch", height="content",
+        st.dataframe(table, hide_index=True, width="stretch", height=600,
                      column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
                                     "胜率": st.column_config.NumberColumn(format="%.1f%%")})
         st.caption("按平均单笔净收益排序。胜率 = 扣除损耗及手续费后盈利的笔数 ÷ 总笔数；持平不算盈利。")
