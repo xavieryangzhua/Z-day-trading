@@ -18,6 +18,8 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") == "impulse_platform_breakout":
+            return
         if rule.get("type") in ("trend_vwap", "trend_sma50", "trend_price_blocks"):
             return
         if rule.get("type") == "trend_pullback" and rule.get("period") in (5, 20):
@@ -92,8 +94,39 @@ def load_data(path=DATA):
     return bars, metadata
 
 
+def platform_breakout_signals(day):
+    """Five-bar impulse, exactly three consolidation bars, up to three trigger bars."""
+    signals = np.zeros(len(day), dtype=bool)
+    for end in range(5, len(day) - 3):
+        impulse = day.iloc[end - 4:end + 1]
+        if not (impulse.close.iloc[-1] > impulse.open.iloc[0]
+                and (impulse.close > impulse.open).sum() >= 3
+                and day.close.iloc[end] > day.ema20.iloc[end]
+                and day.ema20.iloc[end] > day.ema20.iloc[end - 5]):
+            continue
+        consolidation = day.iloc[end + 1:end + 4]
+        midpoint = (impulse.high.max() + impulse.low.min()) / 2
+        if not ((consolidation.close < consolidation.open).any()
+                and (consolidation.low >= midpoint).all()
+                and (consolidation.close > consolidation.ema20).all()):
+            continue
+        floor, ceiling = consolidation.low.min(), consolidation.high.max()
+        for trigger in range(end + 4, min(end + 7, len(day))):
+            bar = day.iloc[trigger]
+            # Cancel takes precedence over triggering; equality does not breach.
+            if bar.close < floor or bar.close < bar.ema20:
+                break
+            if bar.close > bar.open and bar.close > ceiling:
+                if trigger + 1 < len(day):
+                    signals[trigger + 1] = True
+                break  # One trigger per five-bar candidate, even if execution is skipped.
+    return signals
+
+
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] == "impulse_platform_breakout":
+        return platform_breakout_signals(day)
     if rule["type"] == "trend_vwap":
         line = day.vwap
         rising = line > line.shift(5)
@@ -209,13 +242,15 @@ def calculate_trade(entry_price, exit_price, minutes):
 def backtest(bars, buy, sells):
     validate_rule("buy", buy["implementation"])
     summaries, trades = [], []
+    sessions = [(day, np.flatnonzero(entry_signals(day, buy["implementation"])))
+                for _, day in bars.groupby(bars.index.date)]
     for sell in sells:
         rule = sell["implementation"]
         validate_rule("sell", rule)
         sample = []
-        for _, day in bars.groupby(bars.index.date):
+        for day, entries in sessions:
             busy_until = -1
-            for entry in np.flatnonzero(entry_signals(day, buy["implementation"])):
+            for entry in entries:
                 if entry <= busy_until:
                     continue
                 index, price, exit_time, reason = exit_trade(day, entry, rule)
