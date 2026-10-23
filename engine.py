@@ -18,6 +18,10 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") == "double_red_run":
+            return
+        if rule.get("type") == "large_green_pullback" and rule.get("dollars") in (2, 3):
+            return
         if rule.get("type") == "impulse_platform_breakout":
             return
         if rule.get("type") in ("trend_vwap", "trend_sma50", "trend_price_blocks"):
@@ -94,6 +98,33 @@ def load_data(path=DATA):
     return bars, metadata
 
 
+def chart_entry_signals(day, rule):
+    signals = np.zeros(len(day), dtype=bool)
+    o, c = day.open.to_numpy(), day.close.to_numpy()
+    red = c < o
+    if rule["type"] == "double_red_run":
+        small = (c > o) & (c - o <= 0.25)
+        for end in range(22, len(day) - 1):
+            if (red[end-22:end-13].all() and small[end-13:end-11].all()
+                    and red[end-11:end+1].all()):
+                signals[end+1] = True
+        return signals
+    e = day.ema5.to_numpy()
+    for a in np.flatnonzero(c - o > rule["dollars"]):
+        t = a + 1
+        while t < len(day) and red[t]:
+            t += 1
+        if t + 1 >= len(day) or t - a - 1 not in (2, 3):
+            continue
+        b = t - 1
+        if ((c[a+1:t] >= o[a]).all()
+                and abs(day.low.iloc[b] - e[b]) <= 0.10 and c[b] >= e[b]
+                and c[t] > o[t] and c[t] > day.high.iloc[b]
+                and c[t] > e[t] and e[t] > e[b]):
+            signals[t+1] = True
+    return signals
+
+
 def platform_breakout_signals(day):
     """Five-bar impulse, exactly three consolidation bars, up to three trigger bars."""
     signals = np.zeros(len(day), dtype=bool)
@@ -125,6 +156,8 @@ def platform_breakout_signals(day):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] in ("double_red_run", "large_green_pullback"):
+        return chart_entry_signals(day, rule)
     if rule["type"] == "impulse_platform_breakout":
         return platform_breakout_signals(day)
     if rule["type"] == "trend_vwap":
