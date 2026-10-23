@@ -46,13 +46,13 @@ def test_signal_uses_only_completed_bars():
     assert np.array_equal(before, engine.entry_signals(bars, RULE))
 
 
-def test_two_green_counts_entry_resets_on_red_and_exits_next_open():
+def test_two_green_counts_entry_resets_on_red_and_exits_at_close():
     bars = day([100, 101, 100, 101, 105], [101, 100, 101, 102, 106])
     index, price, time, reason = engine.exit_trade(bars, 0, {"type": "two_green"})
-    assert (index, price, reason) == (4, 105, "two_green")
+    assert (index, price, reason) == (3, 102, "two_green")
     assert time == bars.index[4]
     result = engine.exit_trade(bars.iloc[:4], 0, {"type": "two_green"})
-    assert result[3] == "session_close"
+    assert result[3] == "two_green"
     assert result[2] == bars.index[3] + pd.Timedelta(minutes=1)
 
 

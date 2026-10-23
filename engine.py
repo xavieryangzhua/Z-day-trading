@@ -11,11 +11,19 @@ import store
 PARAMETERS = {"symbol": "SPY", "delta": 0.5, "premium_per_share": 2.0,
               "multiplier": 100, "decay_per_share_minute": 0.01,
               "round_trip_fee": 2.0, "return_denominator": 200.0,
-              "overlapping": False, "direction": "call"}
+              "overlapping": False, "direction": "call",
+              "entry_execution": "minute_open", "exit_execution": "minute_close"}
 DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 
 def validate_rule(kind, rule):
+    if kind == "buy":
+        if rule.get("type") == "red_count":
+            window, count = rule.get("window"), rule.get("count")
+            if type(window) is int and type(count) is int and 1 <= count <= window <= 390:
+                return
+        if rule.get("type") == "red_body" and rule.get("dollars") in (1, 2, 3):
+            return
     if kind == "buy" and rule.get("type") == "breakout":
         if rule.get("indicator") in ("vwap", "ema20") and rule.get("confirmation") in ("close", "body"):
             return
@@ -66,6 +74,14 @@ def load_data(path=DATA):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] == "red_count":
+        # Count completed candles only; every qualifying rolling window is a
+        # signal, with overlapping positions filtered by the execution loop.
+        signal = (day.close < day.open).rolling(rule["window"]).sum() >= rule["count"]
+        return signal.shift(1, fill_value=False).to_numpy()
+    if rule["type"] == "red_body":
+        signal = day.open - day.close > rule["dollars"]
+        return signal.shift(1, fill_value=False).to_numpy()
     line = day[rule["indicator"]]
     # Conditions are evaluated only after the bar closes. Comparing its open
     # and close against its completed line does not advance the entry time.
@@ -88,8 +104,8 @@ def exit_trade(day, entry, rule):
     streak = 0
     for i in range(entry, len(day)):
         streak = streak + 1 if day.close.iloc[i] > day.open.iloc[i] else 0
-        if streak >= 2 and i < last:
-            return i + 1, float(day.open.iloc[i + 1]), day.index[i + 1], "two_green"
+        if streak >= 2:
+            return i, float(day.close.iloc[i]), day.index[i] + pd.Timedelta(minutes=1), "two_green"
     return last, float(day.close.iloc[last]), day.index[last] + pd.Timedelta(minutes=1), "session_close"
 
 

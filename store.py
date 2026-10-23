@@ -38,6 +38,22 @@ def _write(items):
     temporary = HOME / "ideas.json.tmp"
     temporary.write_text(json.dumps(items, ensure_ascii=False, indent=2) + "\n")
     temporary.replace(HOME / "ideas.json")
+    _sync_catalog(items)
+
+
+def _sync_catalog(items):
+    """Mirror all ideas, including unrealized prose, into the database."""
+    with connect() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS ideas (
+            id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL,
+            description TEXT NOT NULL, version INTEGER NOT NULL,
+            realize INTEGER NOT NULL, document TEXT NOT NULL)""")
+        db.executemany("""INSERT INTO ideas VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, name=excluded.name,
+            description=excluded.description, version=excluded.version,
+            realize=excluded.realize, document=excluded.document""",
+            [(x["id"], x["kind"], x["name"], x["description"], x["version"],
+              int(x["realize"]), json.dumps(x, ensure_ascii=False)) for x in items])
 
 
 def _read():
@@ -52,6 +68,8 @@ def initialize():
                 item.update(version=1, realize=False, updated_at=now())
                 item["implementation_hash"] = description_hash(item)
             _write(items)
+        else:
+            _sync_catalog(_read())
     with connect() as db:
         db.execute("""CREATE TABLE IF NOT EXISTS runs (
             id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, idea_id TEXT NOT NULL,

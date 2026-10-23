@@ -1,0 +1,111 @@
+[
+  {
+    "id": "red_8",
+    "kind": "buy",
+    "name": "连续 8 根阴线",
+    "description": "连续出现至少8根阴线（收盘低于开盘），下一根分钟线开盘买入。仅使用当日已完成K线；持仓不重叠。",
+    "implementation": {
+      "type": "red_count",
+      "window": 8,
+      "count": 8
+    }
+  },
+  {
+    "id": "red_9",
+    "kind": "buy",
+    "name": "连续 9 根阴线",
+    "description": "连续出现至少9根阴线（收盘低于开盘），下一根分钟线开盘买入。仅使用当日已完成K线；持仓不重叠。",
+    "implementation": {
+      "type": "red_count",
+      "window": 9,
+      "count": 9
+    }
+  },
+  {
+    "id": "red_17_of_20",
+    "kind": "buy",
+    "name": "20 根中至少 17 根阴线",
+    "description": "最近20根已完成分钟线中至少17根阴线，下一根开盘买入。窗口不跨交易日；持仓不重叠。",
+    "implementation": {
+      "type": "red_count",
+      "window": 20,
+      "count": 17
+    }
+  },
+  {
+    "id": "red_body_1",
+    "kind": "buy",
+    "name": "阴线实体大于 1 美元",
+    "description": "一根已完成阴线的开盘价减收盘价严格大于1美元，下一根分钟线开盘买入。",
+    "implementation": {
+      "type": "red_body",
+      "dollars": 1
+    }
+  },
+  {
+    "id": "red_body_2",
+    "kind": "buy",
+    "name": "阴线实体大于 2 美元",
+    "description": "一根已完成阴线的开盘价减收盘价严格大于2美元，下一根分钟线开盘买入。",
+    "implementation": {
+      "type": "red_body",
+      "dollars": 2
+    }
+  },
+  {
+    "id": "red_body_3",
+    "kind": "buy",
+    "name": "阴线实体大于 3 美元",
+    "description": "一根已完成阴线的开盘价减收盘价严格大于3美元，下一根分钟线开盘买入。",
+    "implementation": {
+      "type": "red_body",
+      "dollars": 3
+    }
+  },
+  {
+    "id": "three_bar_drop_3",
+    "kind": "buy",
+    "name": "最近 3 根差值大于 3 美元",
+    "description": "最近3根线的差值大于3美元，下一根开盘买入。"
+  },
+  {
+    "id": "pullback_ma20",
+    "kind": "buy",
+    "name": "20 分钟均线回调",
+    "description": "过去5分钟价格在20分钟均线上方，出现一根阴线回调到20分钟线附近，下一根开盘买入。"
+  },
+  {
+    "id": "pullback_ma5",
+    "kind": "buy",
+    "name": "5 分钟均线回调",
+    "description": "过去5分钟价格在5分钟线上方，出现一根阴线回调到5分钟线附近，下一根开盘买入。"
+  },
+  {
+    "id": "hold_3",
+    "kind": "sell",
+    "name": "持有 3 分钟",
+    "description": "买入后持有3分钟，在第三根分钟线结束时按收盘价卖出；若剩余交易时间不足，则当日收盘退出。",
+    "implementation": {
+      "type": "fixed",
+      "minutes": 3
+    }
+  },
+  {
+    "id": "entry_green_025",
+    "kind": "sell",
+    "name": "买入这根阳线大于 0.25 美元",
+    "description": "买入后的这根阳线大于0.25美元，分钟结束卖出。"
+  },
+  {
+    "id": "entry_three_025",
+    "kind": "sell",
+    "name": "买入后三根分钟线大于 0.25 美元",
+    "description": "买入后三根分钟线大于0.25美元，分钟结束卖出。"
+  },
+  {
+    "id": "option_25_in_10",
+    "kind": "sell",
+    "name": "10 分钟内期权上涨超过 25%",
+    "description": "买入后10分钟内期权价格上涨超过25%，分钟结束卖出。"
+  }
+]
