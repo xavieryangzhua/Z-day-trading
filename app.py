@@ -1,7 +1,12 @@
 import pandas as pd
 import streamlit as st
+from collections import Counter
 
 import store
+
+
+def profit_counts(run):
+    return Counter(t["sell_id"] for t in run["trades"] if t["net_profit"] > 0)
 
 st.set_page_config(page_title="Z-day-trading", page_icon="↗", layout="centered")
 st.markdown("""<style>
@@ -64,18 +69,22 @@ elif page == "排名":
         if not (run and buy["realize"] and all(x["realize"] for x in sells)
                 and run["signature"] == store.signature(buy, sells)):
             continue
+        wins = profit_counts(run)
         for result in run["summary"]:
             if result["mean_return"] is not None and result["trades"] > 0:
                 rows.append({"买入想法": buy["name"],
                              "卖出方法": names.get(result["sell_id"], result["name"]),
                              "平均净收益率": result["mean_return"] * 100,
+                             "胜率": wins[result["sell_id"]] / result["trades"] * 100,
+                             "盈利笔数": wins[result["sell_id"]],
                              "笔数": result["trades"]})
     if rows:
         table = pd.DataFrame(rows).sort_values("平均净收益率", ascending=False, kind="stable").head(10).reset_index(drop=True)
         table.insert(0, "排名", range(1, len(table) + 1))
         st.dataframe(table, hide_index=True, width="stretch", height="content",
-                     column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%")})
-        st.caption("按最新有效回测的平均单笔净收益排序，已扣损耗和手续费；请结合笔数看结果。")
+                     column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
+                                    "胜率": st.column_config.NumberColumn(format="%.1f%%")})
+        st.caption("按平均单笔净收益排序。胜率 = 扣除损耗及手续费后盈利的笔数 ÷ 总笔数；持平不算盈利。")
     else:
         st.info("暂无有效回测结果，完成回测后显示排名。")
 
@@ -95,14 +104,23 @@ else:
         st.info("想法或卖出方法已更新，等待重新实现和回测。")
         with st.expander("上一版本结果"):
             st.caption(run["snapshot"]["buy"]["description"])
-            st.dataframe(pd.DataFrame(run["summary"])[["name", "mean_return", "win_rate", "trades"]], hide_index=True)
+            wins = profit_counts(run)
+            historical = pd.DataFrame([{"卖出方法": x["name"],
+                "平均净收益率": None if x["mean_return"] is None else x["mean_return"] * 100,
+                "胜率": wins[x["sell_id"]] / x["trades"] * 100 if x["trades"] else None,
+                "盈利笔数": wins[x["sell_id"]], "交易次数": x["trades"]} for x in run["summary"]])
+            st.dataframe(historical, hide_index=True, column_config={
+                "平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
+                "胜率": st.column_config.NumberColumn(format="%.1f%%")})
     else:
         source = run["source"]
         st.caption(f"SPY · 1 分钟 · {source['start'][:10]} — {source['end'][:10]} · Nasdaq 单一场所行情")
         names = {x["id"]: x["name"] for x in sells}
+        wins = profit_counts(run)
         table = pd.DataFrame([{"卖出方法": names.get(x["sell_id"], x["name"]),
                                "平均净收益率": None if x["mean_return"] is None else x["mean_return"] * 100,
-                               "胜率": None if x["win_rate"] is None else x["win_rate"] * 100,
+                               "胜率": wins[x["sell_id"]] / x["trades"] * 100 if x["trades"] else None,
+                               "盈利笔数": wins[x["sell_id"]],
                                "交易次数": x["trades"]} for x in run["summary"]])
         st.dataframe(table, hide_index=True, width="stretch", column_config={
             "平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),

@@ -43,7 +43,7 @@ def test_current_results_and_stale_results_are_separate(tmp_path, monkeypatch):
     app = AppTest.from_file(str(Path(__file__).parents[1] / "app.py")).run()
     assert not app.exception
     assert len(app.dataframe) == 1
-    assert list(app.dataframe[0].value.columns) == ["卖出方法", "平均净收益率", "胜率", "交易次数"]
+    assert list(app.dataframe[0].value.columns) == ["卖出方法", "平均净收益率", "胜率", "盈利笔数", "交易次数"]
     sell = next(x for x in store.ideas() if x["kind"] == "sell")
     store.save("sell", sell["name"], "新规则尚未实现", sell["id"])
     app.run()
