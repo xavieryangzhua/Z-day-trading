@@ -18,6 +18,10 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") in ("noise_breakout", "late_momentum"):
+            return
+        if rule.get("type") == "adx_ten_touch" and rule.get("distance") in (.05,.10):
+            return
         if rule.get("type") in ("fib_shallow", "fib_confluence", "fib_extension", "bb_squeeze", "bb_reclaim", "rsi_reclaim"):
             return
         if rule.get("type") == "opening_range" and rule.get("minutes") in (5, 15):
@@ -105,6 +109,7 @@ def load_data(path=DATA):
     bars["ema5"] = bars.close.ewm(span=5, adjust=False, min_periods=5).mean()
     bars["sma50"] = bars.close.rolling(50, min_periods=50).mean()
     add_web_indicators(bars)
+    add_regime_indicators(bars)
     metadata = json.loads((store.ROOT / "data/source.json").read_text())
     actual_hash = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     if actual_hash != metadata["sha256"]:
@@ -112,6 +117,62 @@ def load_data(path=DATA):
     metadata.update(local_file=Path(path).name, actual_sha256=actual_hash,
                     regular_rows=len(bars), start=str(bars.index[0]), end=str(bars.index[-1]))
     return bars, metadata
+
+
+def wilder_average(values, period, first):
+    out = np.full(len(values), np.nan)
+    end = first+period-1
+    if end < len(values):
+        out[end] = np.mean(values[first:end+1])
+        for i in range(end+1, len(values)):
+            out[i] = (out[i-1]*(period-1)+values[i])/period
+    return out
+
+
+def add_regime_indicators(bars):
+    up = bars.high.diff().to_numpy()
+    down = (-bars.low.diff()).to_numpy()
+    plus = np.where((up>down)&(up>0), up, 0)
+    minus = np.where((down>up)&(down>0), down, 0)
+    tr = pd.concat([bars.high-bars.low, (bars.high-bars.close.shift()).abs(),
+                    (bars.low-bars.close.shift()).abs()],axis=1).max(axis=1).to_numpy()
+    atr = wilder_average(tr,14,1)
+    pg, mg = wilder_average(plus,14,1), wilder_average(minus,14,1)
+    with np.errstate(divide="ignore",invalid="ignore"):
+        pdm = np.where(atr==0,0,100*pg/atr)
+        mdm = np.where(atr==0,0,100*mg/atr)
+        dx = np.where(pdm+mdm==0,0,100*np.abs(pdm-mdm)/(pdm+mdm))
+    bars["plus_di"],bars["minus_di"] = pdm,mdm
+    bars["adx14"] = wilder_average(dx,14,14)
+    dates=bars.index.date
+    opening=bars.open.groupby(dates).transform('first')
+    closes=bars.close.groupby(dates).last()
+    previous=pd.Series(dates,index=bars.index).map(closes.shift(1))
+    bars['previous_close']=previous
+    movement=(bars.close/opening-1).abs()
+    sigma=movement.groupby(bars.index.strftime('%H:%M')).transform(lambda x:x.shift(1).rolling(14).mean())
+    bars['noise_upper']=np.maximum(opening,previous)*(1+sigma)
+
+
+def regime_signals(day, rule):
+    if rule['type']=='adx_ten_touch':
+        entries=entry_signals(day,{'type':'ema20_ten_rising_touch','distance':rule['distance']})
+        filter_=(day.adx14>25)&(day.plus_di>day.minus_di)
+        return entries & filter_.shift(1,fill_value=False).to_numpy()
+    signals=np.zeros(len(day),dtype=bool)
+    if rule['type']=='late_momentum':
+        morning=np.flatnonzero(day.index.strftime('%H:%M')=='09:59')
+        entry=np.flatnonzero(day.index.strftime('%H:%M')=='15:30')
+        if len(morning) and len(entry) and day.close.iloc[morning[0]]>day.previous_close.iloc[morning[0]]:
+            signals[entry[0]]=True
+        return signals
+    for t in range(len(day)-1):
+        # Bars timestamped by open: 09:59 closes at the 10:00 checkpoint.
+        hm=day.index[t].strftime('%H:%M')
+        if hm>='09:59' and hm<='15:29' and day.index[t].minute in (29,59):
+            if day.close.iloc[t]>day.noise_upper.iloc[t] and day.close.iloc[t]>day.vwap.iloc[t]:
+                signals[t+1]=True
+    return signals
 
 
 def add_web_indicators(bars):
@@ -312,6 +373,8 @@ def platform_breakout_signals(day):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] in ("noise_breakout", "late_momentum", "adx_ten_touch"):
+        return regime_signals(day, rule)
     if rule["type"] in ("fib_shallow", "fib_confluence", "fib_extension", "opening_range", "bb_squeeze", "bb_reclaim", "rsi_reclaim"):
         return web_entry_signals(day, rule)
     if rule["type"] == "fibonacci_pullback":
