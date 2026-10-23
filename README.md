@@ -184,3 +184,11 @@ Codex 阅读 description 后，通过 `manage.py implement ID '{"type":"breakout
 ## RSI14小于10直接买入
 
 `updates/rsi_below10.py` 新增独立版本，严格<10后下一根开盘入场，不等反弹，其余沿用小于3的执行口径。12种退出中3种正收益。最佳为第3根标的累计上涨>0.25美元才退出、否则收盘：10笔、平均+23.625%、胜率90%；持有30分钟10笔+6.90%、胜率50%；固定3分钟13笔+0.4615%、胜率69.23%。交易仅涉及10个交易日，小样本不能确认稳定性。158项测试通过，执行价与互斥及网页核验通过；排名60×12=720组。
+
+## 多股票分钟数据预备（尚未接入回测）
+
+已从FirstRate Data免费样本页面 https://firstratedata.com/free-intraday-data 下载NVDA、TSLA、AAPL、META到 `data/external/firstrate_samples/`，包含原ZIP及原始1min CSV，未填充、未改价。`sources.json`记录下载URL、时间、SHA256、时区、复权说明及检查结果。网页搜索缓存日期与实际下载包不同，以实测文件为准：2026-10-05至2026-10-16，10个交易日，每只正常时段3900根，无缺分钟或OHLC错误；盘前盘后保留。供应商说明为拆股复权数据，尚未进行第二来源价格核对。
+
+现有引擎仍限制SPY，以上仅准备数据，未写入SPY结果或排行榜。只有10天，不足以预热14个历史交易日的异常波动策略。股票K线不是期权报价；后续跨标的研究需明确模拟参数与来源一致性。
+
+SpaceX官方FAQ https://ir.spacex.com/faqs-and-contact/ 列示代码SPCX、2026-06-12上市，因此无2025年1—4月上市行情。Barchart https://www.barchart.com/stocks/quotes/SPCX/price-history/historical 有分钟历史下载入口但需会员，尚未下载。注意旧代码SPCX曾用于现SPCK ETF，不可混用旧历史。其他长历史供应商为Alpaca历史bars接口与Databento ohlcv-1m，需账户权限/密钥；未购买。
