@@ -18,7 +18,7 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
-        if rule.get("type") == "rsi14_below3":
+        if rule.get("type") in ("rsi14_below3", "rsi14_below10"):
             return
         if rule.get("type") in ("noise_breakout", "late_momentum"):
             return
@@ -375,8 +375,9 @@ def platform_breakout_signals(day):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
-    if rule["type"] == "rsi14_below3":
-        return (day.rsi14 < 3).shift(1, fill_value=False).to_numpy()
+    if rule["type"] in ("rsi14_below3", "rsi14_below10"):
+        threshold = 3 if rule["type"] == "rsi14_below3" else 10
+        return (day.rsi14 < threshold).shift(1, fill_value=False).to_numpy()
     if rule["type"] in ("noise_breakout", "late_momentum", "adx_ten_touch"):
         return regime_signals(day, rule)
     if rule["type"] in ("fib_shallow", "fib_confluence", "fib_extension", "opening_range", "bb_squeeze", "bb_reclaim", "rsi_reclaim"):
