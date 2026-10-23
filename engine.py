@@ -18,6 +18,9 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if (rule.get("type") == "fibonacci_pullback" and rule.get("anchor") in ("window20", "day")
+                and rule.get("ratio") in (.382, .4, .5, .6, .618)):
+            return
         if rule.get("type") == "ema20_ten_rising_touch" and rule.get("distance") in (0.05, 0.10):
             return
         if (rule.get("type") == "ema20_rise_range_touch"
@@ -106,6 +109,34 @@ def load_data(path=DATA):
     return bars, metadata
 
 
+def fibonacci_signals(day, rule):
+    """Freeze anchors at a completed breakout; never use final daily extrema."""
+    signals = np.zeros(len(day), dtype=bool)
+    h, l, c, e = (day[col].to_numpy() for col in ("high", "low", "close", "ema20"))
+    for a in range(20, len(day)-1):
+        start = a-20 if rule["anchor"] == "window20" else 0
+        if not (c[a] > h[start:a].max() and e[a] > e[a-5]):
+            continue
+        floor, ceiling = l[start:a].min(), h[a]
+        # Daily low must already be known before the new daily high candle.
+        if rule["anchor"] == "day":
+            if l[a] < floor:
+                continue
+            floor = min(floor, l[a])
+        if ceiling <= floor:
+            continue
+        level = ceiling-rule["ratio"]*(ceiling-floor)
+        for t in range(a+1, min(a+11, len(day))):
+            # Cancellation wins when OHLC cannot reveal intraminute ordering.
+            if l[t] < floor or h[t] > ceiling:
+                break
+            if l[t] <= level and c[t] > level:
+                if t+1 < len(day):
+                    signals[t+1] = True
+                break
+    return signals
+
+
 def strict_near(distance, limit):
     # Exclude mathematical equality despite binary floating-point rounding.
     return (distance < limit) & ~np.isclose(distance, limit, rtol=0, atol=1e-10)
@@ -190,6 +221,8 @@ def platform_breakout_signals(day):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] == "fibonacci_pullback":
+        return fibonacci_signals(day, rule)
     if rule["type"] == "ema20_ten_rising_touch":
         e = day.ema20
         # Ten increments strictly before the pullback candle, all within this session.
