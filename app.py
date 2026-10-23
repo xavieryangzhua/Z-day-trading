@@ -35,7 +35,7 @@ if page == "想法":
     item = lookup.get(selected)
     with st.form(f"edit_{selected}_{item['updated_at'] if item else 'new'}", clear_on_submit=False):
         name = st.text_input("名称", value=item["name"] if item else "", max_chars=120)
-        description = st.text_area("Description", value=item["description"] if item else "", height=140)
+        description = st.text_area("Description", value=item["description"] if item else "", height=300)
         reset = st.checkbox("重新实现（realize = false）") if item else False
         if st.form_submit_button("保存", type="primary"):
             try:
@@ -94,7 +94,8 @@ else:
     lookup = {x["id"]: x for x in buys}
     selected = st.selectbox("买入想法", list(lookup), format_func=lambda key: lookup[key]["name"])
     buy = lookup[selected]
-    st.write(buy["description"])
+    with st.expander("买入规则"):
+        st.text(buy["description"])
     run = store.latest(selected)
     fresh = run and buy["realize"] and all(x["realize"] for x in sells) and run["signature"] == store.signature(buy, sells)
     if not run:

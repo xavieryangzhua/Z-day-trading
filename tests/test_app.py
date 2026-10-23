@@ -49,4 +49,4 @@ def test_current_results_and_stale_results_are_separate(tmp_path, monkeypatch):
     app.run()
     assert not app.exception
     assert any("等待重新实现" in x.value for x in app.info)
-    assert app.expander[0].label == "上一版本结果"
+    assert any(x.label == "上一版本结果" for x in app.expander)
