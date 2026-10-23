@@ -18,6 +18,10 @@ DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get("type") in ("fib_shallow", "fib_confluence", "fib_extension", "bb_squeeze", "bb_reclaim", "rsi_reclaim"):
+            return
+        if rule.get("type") == "opening_range" and rule.get("minutes") in (5, 15):
+            return
         if (rule.get("type") == "fibonacci_pullback" and rule.get("anchor") in ("window20", "day")
                 and rule.get("ratio") in (.382, .4, .5, .6, .618)):
             return
@@ -100,6 +104,7 @@ def load_data(path=DATA):
     bars["ema20"] = bars.close.ewm(span=20, adjust=False, min_periods=20).mean()
     bars["ema5"] = bars.close.ewm(span=5, adjust=False, min_periods=5).mean()
     bars["sma50"] = bars.close.rolling(50, min_periods=50).mean()
+    add_web_indicators(bars)
     metadata = json.loads((store.ROOT / "data/source.json").read_text())
     actual_hash = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     if actual_hash != metadata["sha256"]:
@@ -107,6 +112,92 @@ def load_data(path=DATA):
     metadata.update(local_file=Path(path).name, actual_sha256=actual_hash,
                     regular_rows=len(bars), start=str(bars.index[0]), end=str(bars.index[-1]))
     return bars, metadata
+
+
+def add_web_indicators(bars):
+    close = bars.close
+    mean = close.rolling(20).mean()
+    std = close.rolling(20).std(ddof=0)
+    bars["bb_upper"], bars["bb_lower"] = mean+2*std, mean-2*std
+    bars["bb_width"] = 4*std/mean
+    bars["bb_cutoff"] = bars.bb_width.shift(2).rolling(60).quantile(.2, interpolation="linear")
+    bars["bb_prev_width"] = bars.bb_width.shift(1)
+    changes = close.diff().to_numpy()
+    rsi = np.full(len(bars), np.nan)
+    if len(bars) >= 15:
+        gain = np.maximum(changes[1:15], 0).mean()
+        loss = np.maximum(-changes[1:15], 0).mean()
+        for t in range(14, len(bars)):
+            if t > 14:
+                gain = (13*gain+max(changes[t], 0))/14
+                loss = (13*loss+max(-changes[t], 0))/14
+            rsi[t] = 100-100/(1+gain/loss) if loss > 0 else (100 if gain > 0 else 50)
+    bars["rsi14"] = rsi
+
+
+def web_entry_signals(day, rule):
+    kind = rule["type"]
+    signals = np.zeros(len(day), dtype=bool)
+    if kind == "opening_range":
+        n = rule["minutes"]
+        if len(day) < n or day.index[0].strftime("%H:%M") != "09:30":
+            return signals
+        if not day.index[:n].equals(pd.date_range(day.index[0], periods=n, freq="min")):
+            return signals
+        high = day.high.iloc[:n].max()
+        for t in range(n, len(day)-1):
+            if day.index[t].strftime("%H:%M") >= "11:00":
+                break
+            if day.close.iloc[t] > high and day.close.iloc[t-1] <= high:
+                signals[t+1] = True
+                break
+        return signals
+    if kind == "bb_squeeze":
+        signal = (day.bb_prev_width <= day.bb_cutoff) & (day.bb_width > day.bb_prev_width)
+        signal &= (day.close > day.bb_upper) & (day.close.shift(1) <= day.bb_upper.shift(1))
+        signal &= day.close > day.high.shift(1).rolling(10).max()
+        return signal.shift(1, fill_value=False).to_numpy()
+    if kind == "bb_reclaim":
+        signal = (day.close.shift(1) < day.bb_lower.shift(1)) & (day.close > day.bb_lower) & (day.close > day.open)
+        return signal.shift(1, fill_value=False).to_numpy()
+    if kind == "rsi_reclaim":
+        signal = (day.rsi14.shift(1) < 30) & (day.rsi14 >= 30)
+        signal &= (day.close > day.open) & (day.close > day.high.shift(1))
+        return signal.shift(1, fill_value=False).to_numpy()
+    h, l, c, e = (day[col].to_numpy() for col in ("high", "low", "close", "ema20"))
+    eps = 1e-10 if kind == "fib_confluence" else 0
+    for a in range(20, len(day)-1):
+        if not (c[a] > h[a-20:a].max()+eps and e[a] > e[a-5]+eps):
+            continue
+        floor, ceiling = l[a-20:a].min(), h[a]
+        if ceiling <= floor+eps:
+            continue
+        if kind == "fib_extension":
+            level = floor+1.272*(ceiling-floor)
+            for b in range(a+1, min(a+21, len(day))):
+                if l[b] < floor:
+                    break
+                if c[b] > level:
+                    for t in range(b+1, min(b+6, len(day))):
+                        if l[t] < floor:
+                            break
+                        if l[t] <= level and c[t] > level:
+                            if t+1 < len(day): signals[t+1] = True
+                            break
+                    break
+        else:
+            ratio = .236 if kind == "fib_shallow" else .618
+            level = ceiling-ratio*(ceiling-floor)
+            for t in range(a+1, min(a+11, len(day))):
+                if l[t] < floor-eps or h[t] > ceiling+eps:
+                    break
+                confirmed = l[t] <= level+eps and c[t] > level+eps
+                if kind == "fib_confluence":
+                    confirmed &= abs(level-e[t]) <= .10+eps and c[t] >= e[t]-eps
+                if confirmed:
+                    if t+1 < len(day): signals[t+1] = True
+                    break
+    return signals
 
 
 def fibonacci_signals(day, rule):
@@ -221,6 +312,8 @@ def platform_breakout_signals(day):
 
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule["type"] in ("fib_shallow", "fib_confluence", "fib_extension", "opening_range", "bb_squeeze", "bb_reclaim", "rsi_reclaim"):
+        return web_entry_signals(day, rule)
     if rule["type"] == "fibonacci_pullback":
         return fibonacci_signals(day, rule)
     if rule["type"] == "ema20_ten_rising_touch":
