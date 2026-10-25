@@ -1,4 +1,4 @@
-"""Separate stock-sample runs using the same entry/exit engine, never SPY run IDs."""
+"""Separate stock runs using the same entry/exit engine, never SPY run IDs."""
 import hashlib
 import json
 from collections import Counter
@@ -11,7 +11,9 @@ import engine
 import store
 
 SYMBOLS = ('NVDA', 'TSLA', 'AAPL', 'META')
-DATA_DIR = store.ROOT / 'data/external/firstrate_samples'
+DATA_DIR = store.ROOT / 'data/external/ibkr/2025-10-23_2026-10-23'
+# NYSE/Nasdaq calendar: early closes within the downloaded interval.
+EARLY_CLOSES = {'2025-11-28', '2025-12-24'}
 
 
 def code_snapshot():
@@ -29,17 +31,23 @@ def initialize():
         db.execute('CREATE INDEX IF NOT EXISTS stock_run_lookup ON stock_runs(symbol,idea_id,id)')
 
 
-def load_stock(symbol, directory=DATA_DIR):
-    if symbol not in SYMBOLS:
+def load_stock(symbol, directory=None):
+    directory = DATA_DIR if directory is None else directory
+    if symbol not in (*SYMBOLS, 'QQQ'):
         raise ValueError('Unsupported stock symbol')
     sources = json.loads((directory/'sources.json').read_text())
     source = next(x.copy() for x in sources if x['symbol']==symbol)
     path=directory/f'{symbol}_1min.csv'
     actual=hashlib.sha256(path.read_bytes()).hexdigest()
-    if actual!=source['csv_sha256']:
+    if actual!=source.get('sha256', source.get('csv_sha256')):
         raise ValueError(f'{symbol} source SHA256 mismatch')
-    bars=pd.read_csv(path,header=None,names=['timestamp','open','high','low','close','volume'])
-    bars.index=pd.DatetimeIndex(pd.to_datetime(bars.pop('timestamp'))).tz_localize('America/New_York')
+    if source.get('whatToShow') == 'TRADES':
+        bars = pd.read_csv(path)
+        bars.index = pd.DatetimeIndex(pd.to_datetime(bars.pop('timestamp'), utc=True)).tz_convert('America/New_York')
+        bars = bars[['open','high','low','close','volume']]
+    else:
+        bars=pd.read_csv(path,header=None,names=['timestamp','open','high','low','close','volume'])
+        bars.index=pd.DatetimeIndex(pd.to_datetime(bars.pop('timestamp'))).tz_localize('America/New_York')
     if bars.index.has_duplicates or not bars.index.is_monotonic_increasing:
         raise ValueError('Duplicate or unordered timestamps')
     bars=bars.between_time('09:30','15:59').copy()
@@ -50,7 +58,8 @@ def load_stock(symbol, directory=DATA_DIR):
     if ((bars.low>bars[['open','close']].min(axis=1)) | (bars.high<bars[['open','close']].max(axis=1)) | (bars.low<=0)).any():
         raise ValueError('Invalid OHLC geometry')
     for date,day in bars.groupby(bars.index.date):
-        expected=pd.date_range(f'{date} 09:30',periods=390,freq='min',tz='America/New_York')
+        periods = 210 if str(date) in EARLY_CLOSES else 390
+        expected=pd.date_range(f'{date} 09:30',periods=periods,freq='min',tz='America/New_York')
         if not day.index.equals(expected):
             raise ValueError(f'{symbol} {date}: incomplete session; do not fill missing bars')
     # Warmup uses regular sessions only and carries within this symbol, never across symbols.
@@ -78,7 +87,7 @@ def run_stocks(symbols=SYMBOLS):
     code=code_snapshot();code_hash=store.digest(code)
     for symbol in symbols:
         bars,source=load_stock(symbol)
-        for buy in buys:
+        for number, buy in enumerate(buys, 1):
             signature=store.signature(buy,sells)
             with store.connect() as db:
                 exists=db.execute('SELECT id FROM stock_runs WHERE symbol=? AND idea_id=? AND signature=? AND engine_hash=? AND source_hash=?',
@@ -86,7 +95,7 @@ def run_stocks(symbols=SYMBOLS):
             if exists:continue
             status,reason='complete',''
             if buy['implementation']['type']=='noise_breakout' and bars.noise_upper.isna().all():
-                status,reason='insufficient_data','仅10个交易日，缺少前14个交易日的同时刻预热数据'
+                status,reason='insufficient_data','缺少前14个交易日的同时刻预热数据'
             summary,trades=engine.backtest(bars,buy,sells)
             wins=Counter(t['sell_id'] for t in trades if t['net_profit']>0)
             for s in summary:s['profitable_trades']=wins[s['sell_id']]
@@ -97,17 +106,19 @@ def run_stocks(symbols=SYMBOLS):
                 db.execute('INSERT INTO stock_runs (created_at,symbol,idea_id,signature,engine_hash,source_hash,status,reason,snapshot,source,parameters,summary,trades) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                            (store.now(),symbol,buy['id'],signature,code_hash,source['actual_sha256'],status,reason,
                             json.dumps(snapshot,ensure_ascii=False),json.dumps(source,ensure_ascii=False),json.dumps(params),json.dumps(summary,ensure_ascii=False),json.dumps(trades)))
+            if number % 10 == 0:
+                print(f'{symbol}: {number}/{len(buys)} ideas complete', flush=True)
         print(f'{symbol}: {len(buys)} ideas × {len(sells)} exits saved',flush=True)
 
 
-def ranking_rows(items):
+def ranking_rows(items, symbols=SYMBOLS):
     initialize()
     buys={x['id']:x for x in items if x['kind']=='buy'}
     sells=[x for x in items if x['kind']=='sell']
     sell_names={x['id']:x['name'] for x in sells}
     code_hash=store.digest(code_snapshot())
     # Verify local source bytes before displaying a run as current.
-    hashes={s:hashlib.sha256((DATA_DIR/f'{s}_1min.csv').read_bytes()).hexdigest() for s in SYMBOLS if (DATA_DIR/f'{s}_1min.csv').exists()}
+    hashes={s:hashlib.sha256((DATA_DIR/f'{s}_1min.csv').read_bytes()).hexdigest() for s in symbols if (DATA_DIR/f'{s}_1min.csv').exists()}
     with store.connect() as db:
         runs=db.execute('''SELECT r.symbol,r.idea_id,r.signature,r.engine_hash,r.source_hash,r.status,r.reason,r.summary
             FROM stock_runs r JOIN (SELECT symbol,idea_id,max(id) id FROM stock_runs GROUP BY symbol,idea_id) latest ON r.id=latest.id''').fetchall()

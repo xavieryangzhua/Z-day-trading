@@ -63,7 +63,7 @@ elif page == "想法库":
 
 elif page == "个股排名":
     import equities
-    st.caption("2026/10/05—10/16 · 10个交易日 · FirstRate拆股复权1分钟样本")
+    st.caption("2025/10/23—2026/10/22 · 251个交易日 · IBKR正常交易时段1分钟数据")
     symbol = st.selectbox("股票", ["全部", *equities.SYMBOLS])
     minimum = st.number_input("最少交易笔数", min_value=0, value=0, step=1)
     rows = equities.ranking_rows(items)
@@ -77,19 +77,22 @@ elif page == "个股排名":
         st.dataframe(table, hide_index=True, width="stretch", height=600,
                      column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
                                     "胜率": st.column_config.NumberColumn(format="%.1f%%")})
-        st.caption("平均单笔净收益排序 · 固定Delta 0.5、$200/张、损耗$1/分钟、往返费$2；并非真实期权报价。不同股票沿用原规则的美元阈值。")
-        st.caption("预热不足：异常波动策略需要前14个交易日，当前只有10天；其他指标从样本起点预热。0笔不代表收益为0。")
+        st.caption(r"平均单笔净收益排序 · 固定Delta 0.5、\$200/张、损耗\$1/分钟、往返费\$2；并非真实期权报价。不同股票沿用原规则的美元阈值。")
+        st.caption("指标从数据起点预热；半日市在实际收盘退出。0笔不代表收益为0。")
     else:
         st.info("暂无有效个股结果，需完成回测；修改规则或数据后需重新运行。")
 
 elif page == "排名":
+    st.subheader("SPY")
     rows = []
+    ranking_source = None
     names = {x["id"]: x["name"] for x in sells}
     for buy in buys:
         run = store.latest(buy["id"])
         if not (run and buy["realize"] and all(x["realize"] for x in sells)
                 and run["signature"] == store.signature(buy, sells)):
             continue
+        ranking_source = run["source"]
         wins = profit_counts(run)
         for result in run["summary"]:
             rows.append({"买入想法": buy["name"],
@@ -99,6 +102,9 @@ elif page == "排名":
                              "盈利笔数": wins[result["sell_id"]],
                              "笔数": result["trades"]})
     if rows:
+        if ranking_source and ranking_source.get("start"):
+            venue = "IBKR正常交易时段" if ranking_source.get("whatToShow") == "TRADES" else "Nasdaq 单一场所行情"
+            st.caption(f"SPY · {ranking_source['start'][:10]} — {ranking_source['end'][:10]} · {venue}")
         table = pd.DataFrame(rows).sort_values("平均净收益率", ascending=False, kind="stable", na_position="last").reset_index(drop=True)
         table.insert(0, "排名", range(1, len(table) + 1))
         st.dataframe(table, hide_index=True, width="stretch", height=600,
@@ -107,6 +113,21 @@ elif page == "排名":
         st.caption("按平均单笔净收益排序。胜率 = 扣除损耗及手续费后盈利的笔数 ÷ 总笔数；持平不算盈利。")
     else:
         st.info("暂无有效回测结果，完成回测后显示排名。")
+
+    st.subheader("QQQ")
+    import equities
+    qqq_rows = equities.ranking_rows(items, symbols=("QQQ",))
+    if qqq_rows:
+        st.caption("2025-10-23 — 2026-10-22 · IBKR正常交易时段1分钟数据")
+        qqq_table = pd.DataFrame(qqq_rows).drop(columns=["股票", "状态"])
+        qqq_table = qqq_table.sort_values("平均净收益率", ascending=False, kind="stable", na_position="last").reset_index(drop=True)
+        qqq_table.insert(0, "排名", range(1, len(qqq_table) + 1))
+        st.dataframe(qqq_table, hide_index=True, width="stretch", height=600,
+                     column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
+                                    "胜率": st.column_config.NumberColumn(format="%.1f%%")})
+        st.caption("同一组买入与卖出规则、同一费用模型；显示平均单笔净收益，不是真实期权报价。")
+    else:
+        st.info("QQQ 暂无有效回测结果。")
 
 else:
     if not buys:
@@ -135,7 +156,8 @@ else:
                 "胜率": st.column_config.NumberColumn(format="%.1f%%")})
     else:
         source = run["source"]
-        st.caption(f"SPY · 1 分钟 · {source['start'][:10]} — {source['end'][:10]} · Nasdaq 单一场所行情")
+        venue = "IBKR正常交易时段" if source.get("whatToShow") == "TRADES" else "Nasdaq 单一场所行情"
+        st.caption(f"SPY · 1 分钟 · {source['start'][:10]} — {source['end'][:10]} · {venue}")
         names = {x["id"]: x["name"] for x in sells}
         wins = profit_counts(run)
         table = pd.DataFrame([{"卖出方法": names.get(x["sell_id"], x["name"]),

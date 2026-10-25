@@ -138,14 +138,14 @@ def test_run_only_false_and_preserve_snapshots(storage, monkeypatch):
 
 def test_real_data_vwap_resets_ema_carries_and_dst():
     bars, source = engine.load_data()
-    assert len(bars) == 30810
+    assert len(bars) == source["session_rows"]["regular"]
     assert source["actual_sha256"] == source["sha256"]
     days = list(bars.groupby(bars.index.date))
     next_day = days[1][1]
     first = next_day.iloc[0]
     assert first.vwap == pytest.approx((first.high + first.low + first.close) / 3)
     assert pd.notna(first.ema20)
-    assert bars.index[0].utcoffset() != bars.index[-1].utcoffset()
+    assert len({t.utcoffset() for t in bars.index}) == 2
     altered = bars.copy()
     altered.loc[altered.index[-10:], "close"] = 999
     assert np.array_equal(engine.entry_signals(days[0][1], RULE),

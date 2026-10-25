@@ -202,3 +202,52 @@ SpaceX官方FAQ https://ir.spacex.com/faqs-and-contact/ 列示代码SPCX、2026-
 2026-10-05至10-16共2880组合记录：48预热不足、696无信号、2136有交易，其中358平均净收益正。按至少10笔过滤，各股票样本内最佳为NVDA前20根突破后60%回撤＋1分钟10笔+0.2623%、胜率50%；TSLA三分钟跌超2美元＋15分钟10笔+12.2715%、胜率60%；AAPL EMA20五分钟涨≥0.20且距离<0.10＋2分钟20笔+2.2711%、胜率60%；META单根阴线跌超3美元＋10分钟11笔+69.5691%、胜率63.64%。小样本加固定线性期权模型，不能视为稳定实盘收益；不同股票与SPY的样本期及来源不同。SpaceX未获取数据，不纳入。
 
 162项测试通过；全部240个stock_runs核验入场开盘/退出收盘价格、互斥、收益/胜率汇总及规则签名，AppTest验证2880行、股票与最少笔数过滤、原SPY720组合保留；浏览器已展示新页面。
+
+
+## IBKR 历史分钟数据下载
+
+用户授权的只读行情下载独立于网页和回测。使用已安装 `ib_insync` 的 Python，在项目目录执行 `../.venv/bin/python download_ibkr.py`，连接本机 IB Gateway 的 4002 端口。仅请求 NVDA、TSLA、AAPL、META 的 SMART / TRADES、正常交易时段一分钟 K 线，不提交订单。默认下载纽约日期今天之前的一整年，排除今天。
+
+按周请求并缓存到 `data/external/ibkr/<起止日期>/chunks/`；重跑相同 `--end YYYY-MM-DD` 可续传。合并 CSV 使用 UTC 分钟开盘时间，保留成交量、均价和成交笔数；`sources.json` 记录合约、时间范围、SHA256、每天笔数和日内缺口。半日市保留，不补造分钟。原始数据已被 Git 忽略，不自动替换网页的旧回测结果。
+
+## IBKR 一年个股回测
+
+个股排名现在使用 `data/external/ibkr/2025-10-23_2026-10-23/` 的四只股票数据，区间为2025-10-23至2026-10-22，共251个交易日；每只97,530根。运行 `.venv/bin/python equities.py` 重跑所有已实现买入想法与卖出方法，按代码、规则和数据哈希跳过已完成版本。旧FirstRate样本回测保留在SQLite，但不参与当前排名。
+
+IBKR CSV的UTC开盘时间转换到纽约时间。2025-11-28与2025-12-24为13:00收盘的半日市，保留210根并在实际收盘退出；其他日期要求完整390根，缺失分钟报错，不填充。指标分别在各股票数据起点预热，沿用原美元阈值及合成Call收益模型。
+
+## SPY 一年 IBKR 回测
+
+SPY 使用同一 IB Gateway 只读下载：`../.venv/bin/python download_ibkr.py --symbols SPY --end 2026-10-23`，SMART路由、ARCA主交易所、TRADES一分钟、仅正常时段。下载器增量更新来源清单，保留其他股票记录。
+
+`data/source.json` 指向当前SPY数据，旧Nasdaq来源记录另存 `data/source_databento_2025.json`。当前SPY范围为2025-10-23至2026-10-22；UTC时间转换到纽约时间，保留两个13:00收盘的半日市，不填补缺失分钟。每次完整数据切换后显式将买入条目置为待回测，再运行 `manage.py run`；旧SQLite记录保留。结果和排名根据运行快照显示实际数据日期和来源。
+
+## QQQ 排名
+
+QQQ 使用同一年度 IBKR SMART/TRADES 正常时段分钟数据，通过 `../.venv/bin/python download_ibkr.py --symbols QQQ --end 2026-10-23` 下载。运行 `.venv/bin/python -c "import equities; equities.run_stocks(('QQQ',))"` 回测同一60个买入与12个卖出规则。
+
+「排名」页先显示SPY，再显示QQQ，分别排序，均包含收益率、胜率、盈利笔数和总笔数。QQQ记录以独立symbol存入stock_runs，保留规则、来源和代码快照；「个股排名」仍只显示NVDA、TSLA、AAPL、META。
+
+## GitHub 完整备份与恢复
+
+代码和依赖清单保存在Git仓库；完整行情、下载缓存、想法JSON、全部历史回测SQLite及汇总文件保存在同一私有仓库的Release数据包中。数据库超过普通Git文件大小限制，因此不直接提交SQLite。虚拟环境、缓存、锁文件和登录凭据不属于备份内容。
+
+在新克隆的项目目录中，下载Release中的 `zday-data-2026-10-25.tar.gz` 和同名 `.sha256` 文件，然后执行：
+
+```sh
+shasum -a 256 -c zday-data-2026-10-25.tar.gz.sha256
+tar -xzf zday-data-2026-10-25.tar.gz
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-lock.txt
+.venv/bin/python -m streamlit run app.py --server.port 8510
+```
+
+解压将还原 `data/` 和 `storage/`，请在新目录操作，避免覆盖现有研究。数据包内 `snapshot-manifest.json` 记录每个文件的大小和SHA256。归档时通过SQLite备份接口获取一致快照，并检查数据库及归档中每个文件。
+
+重新制作完整数据包：
+
+```sh
+.venv/bin/python scripts/package_data.py /tmp/zday-data-YYYY-MM-DD.tar.gz
+```
+
+行情数据包含IBKR订阅数据和第三方样本；仓库和数据包应保持私有，用于个人研究备份。

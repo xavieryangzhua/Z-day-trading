@@ -80,9 +80,21 @@ def validate_rule(kind, rule):
     raise ValueError("规则尚未实现，请让 Codex 实现该 description 后再运行。")
 
 
-def load_data(path=DATA):
+def load_data(path=None):
+    metadata = json.loads((store.ROOT / "data/source.json").read_text())
+    path = Path(path) if path is not None else store.ROOT / "data" / metadata["file"]
+    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_hash != metadata["sha256"]:
+        raise ValueError("行情文件与来源记录的 SHA256 不一致。")
     bars = pd.read_csv(path)
-    bars.index = pd.to_datetime(bars.pop("ts_event"), utc=True).dt.tz_convert("America/New_York")
+    if metadata.get("whatToShow") == "TRADES":
+        if metadata.get("symbol") != "SPY":
+            raise ValueError("SPY 来源合约不匹配。")
+        bars.index = pd.to_datetime(bars.pop("timestamp"), utc=True).dt.tz_convert("America/New_York")
+        bars = bars[["open", "high", "low", "close", "volume"]]
+        bars["symbol"] = "SPY"
+    else:
+        bars.index = pd.to_datetime(bars.pop("ts_event"), utc=True).dt.tz_convert("America/New_York")
     if bars.index.has_duplicates or not bars.index.is_monotonic_increasing:
         raise ValueError("行情时间重复或未排序。")
     if set(bars.symbol.unique()) != {"SPY"}:
@@ -97,10 +109,11 @@ def load_data(path=DATA):
         (bars.high < bars[["open", "close"]].max(axis=1)) |
         (bars.low <= 0)).any():
         raise ValueError("行情 OHLC 不合法。")
-    # This dataset contains complete, full-length sessions only. Reject gaps;
+    # Validate full sessions or explicitly documented early closes. Reject gaps;
     # never call the last available bar a market close when minutes are missing.
     for date, day in bars.groupby(bars.index.date):
-        expected = pd.date_range(f"{date} 09:30", periods=390, freq="min", tz="America/New_York")
+        periods = 210 if str(date) in metadata.get("early_close_dates", []) else 390
+        expected = pd.date_range(f"{date} 09:30", periods=periods, freq="min", tz="America/New_York")
         if not day.index.equals(expected):
             raise ValueError(f"{date} 行情不完整；请补齐来源数据后再回测。")
     typical = (bars.high + bars.low + bars.close) / 3
@@ -112,10 +125,6 @@ def load_data(path=DATA):
     bars["sma50"] = bars.close.rolling(50, min_periods=50).mean()
     add_web_indicators(bars)
     add_regime_indicators(bars)
-    metadata = json.loads((store.ROOT / "data/source.json").read_text())
-    actual_hash = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    if actual_hash != metadata["sha256"]:
-        raise ValueError("行情文件与来源记录的 SHA256 不一致。")
     metadata.update(local_file=Path(path).name, actual_sha256=actual_hash,
                     regular_rows=len(bars), start=str(bars.index[0]), end=str(bars.index[-1]))
     return bars, metadata
@@ -580,6 +589,8 @@ def run_pending():
                 buy.pop("error", None)
                 buy["updated_at"] = store.now()
                 completed.append(buy["name"])
+                if len(completed) % 10 == 0:
+                    print(f"SPY: {len(completed)}/{len(buys)} ideas complete", flush=True)
             except (ValueError, KeyError) as exc:
                 buy["error"] = str(exc)
                 errors.append(f"{buy['name']}：{exc}")

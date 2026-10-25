@@ -1,0 +1,57 @@
+{
+  "symbol": "SPY",
+  "interval": "1 minute",
+  "file": "SPY_1min_2025-01-02_2025-04-28.csv",
+  "rows": 61617,
+  "size_bytes": 6583278,
+  "sha256": "021ccf332c29adbd7feb0aaa4bba0ef42c2129c7751c9199cfa09079ddc8b342",
+  "first_timestamp_utc": "2025-01-02T09:00:00.000000000Z",
+  "last_timestamp_utc": "2025-04-28T23:54:00.000000000Z",
+  "timezone": "UTC (Z suffix); session classification uses America/New_York including DST",
+  "trading_days": 79,
+  "monthly_rows": {
+    "2025-01": 14710,
+    "2025-02": 14049,
+    "2025-03": 16517,
+    "2025-04": 16341
+  },
+  "session_rows": {
+    "premarket": 20330,
+    "regular": 30810,
+    "afterhours": 10477
+  },
+  "regular_session_expected_minutes": 30810,
+  "regular_session_missing_minutes": 0,
+  "regular_session_coverage_percent": 100.0,
+  "regular_session_missing_by_date_new_york": {},
+  "checks": {
+    "sha256_matches_upstream_lfs": true,
+    "duplicates": 0,
+    "invalid_ohlcv": 0,
+    "off_minute_timestamps": 0,
+    "missing_trading_days": [],
+    "chronological": true
+  },
+  "source_page": "https://eric1k.github.io/SPY-Analysis/index2.html",
+  "repository": "https://github.com/eric1k/SPY-Analysis",
+  "source_commit": "7c4157177c1247944f00af710639a82fd20c2ebe",
+  "download_url": "https://media.githubusercontent.com/media/eric1k/SPY-Analysis/7c4157177c1247944f00af710639a82fd20c2ebe/SPY-1m-databento.csv",
+  "upstream_sha256": "53dfc496d91d9db852c691c85fef634616ee8691e5230360d1b8bd30767b12cb",
+  "upstream_size_bytes": 137337020,
+  "retrieved_at_utc": "2026-10-11T10:14:20.865209+00:00",
+  "publisher_id": 2,
+  "dataset": "XNAS.ITCH",
+  "venue": "Nasdaq",
+  "publisher_reference": "https://docs.rs/dbn/latest/dbn/enum.Publisher.html",
+  "calendar_sources": [
+    "https://www.nyse.com/markets/hours-calendars",
+    "https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2024-87"
+  ],
+  "processing": "Only retain original source rows whose UTC timestamps are in 2025; preserve original fields and values. No filling, resampling or price adjustments.",
+  "limitations": [
+    "Public third-party copy of Databento data; not downloaded from an authenticated Databento account.",
+    "Nasdaq venue bars only, not consolidated US market OHLCV. Volume is not total US market volume.",
+    "Missing minutes are preserved; cannot distinguish no eligible trade from upstream data omission.",
+    "No independent vendor price reconciliation; upstream adjustment policy and redistribution rights not independently established."
+  ]
+}
