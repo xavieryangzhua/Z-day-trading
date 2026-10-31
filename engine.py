@@ -8,16 +8,24 @@ import pandas as pd
 
 import store
 
-PARAMETERS = {"symbol": "SPY", "delta": 0.5, "premium_per_share": 2.0,
-              "multiplier": 100, "decay_per_share_minute": 0.01,
-              "round_trip_fee": 2.0, "return_denominator": 200.0,
-              "overlapping": False, "direction": "call",
-              "entry_execution": "minute_open", "exit_execution": "minute_close"}
+from research_pricing import PARAMETERS, prepare_sessions, trade_pricer
+
+
+def code_snapshot():
+    return {name: (store.ROOT / name).read_text() for name in
+            ('engine.py', 'store.py', 'research_pricing.py', 'option_pricing.py')}
+
 DATA = store.ROOT / "data" / "SPY_1min_2025-01-02_2025-04-28.csv"
 
 
 def validate_rule(kind, rule):
     if kind == "buy":
+        if rule.get('type') == 'rsi11_below' and rule.get('threshold') in (3,7,10,14,20):return
+        if rule.get('type') == 'rsi11_reclaim':return
+        if (rule.get('type') == 'percent_drop' and
+                (rule.get('minutes'), rule.get('percent')) in ((1, .1), (3, .2))):return
+        if rule.get('type')=='fixed_window_drop' and rule.get('minutes') in (10,30) and rule.get('percent') in (.28,.30,.35,.40,.45,.50):return
+        if rule.get('type') in ('five_minute_red5','spx_first_round_touch'):return
         if rule.get("type") in ("rsi14_below3", "rsi14_below10"):
             return
         if rule.get("type") in ("noise_breakout", "late_momentum"):
@@ -205,6 +213,17 @@ def add_web_indicators(bars):
                 loss = (13*loss+max(-changes[t], 0))/14
             rsi[t] = 100-100/(1+gain/loss) if loss > 0 else (100 if gain > 0 else 50)
     bars["rsi14"] = rsi
+    # Keep archived RSI14 rules reproducible; active RSI11 uses its own Wilder seed/state.
+    rsi11 = np.full(len(bars), np.nan)
+    if len(bars) >= 12:
+        gain = np.maximum(changes[1:12], 0).mean()
+        loss = np.maximum(-changes[1:12], 0).mean()
+        for t in range(11, len(bars)):
+            if t > 11:
+                gain = (10*gain+max(changes[t], 0))/11
+                loss = (10*loss+max(-changes[t], 0))/11
+            rsi11[t] = 100-100/(1+gain/loss) if loss > 0 else (100 if gain > 0 else 50)
+    bars['rsi11'] = rsi11
 
 
 def web_entry_signals(day, rule):
@@ -382,8 +401,61 @@ def platform_breakout_signals(day):
     return signals
 
 
+def fixed_time_signals(day, rule):
+    signals=np.zeros(len(day),dtype=bool)
+    if day.empty:return signals
+    start=day.index[0].normalize()+pd.Timedelta(hours=9,minutes=30)
+    size=rule.get('minutes',5)
+    streak=0
+    for begin in pd.date_range(start,day.index[-1],freq=f'{size}min'):
+        end=begin+pd.Timedelta(minutes=size)
+        expected=pd.date_range(begin,periods=size,freq='min')
+        block=day[(day.index>=begin)&(day.index<end)]
+        if not block.index.equals(expected):
+            streak=0;continue
+        if rule['type']=='five_minute_red5':
+            streak=streak+1 if block.close.iloc[-1]<block.open.iloc[0] else 0
+            trigger=streak>=5
+        else:
+            drop=(block.open.iloc[0]-block.close.iloc[-1])/block.open.iloc[0]*100
+            trigger=drop>rule['percent'] or np.isclose(drop,rule['percent'],rtol=0,atol=1e-10)
+        if trigger and end in day.index:signals[day.index.get_loc(end)]=True
+    return signals
+
+
+def spx_round_signals(day):
+    signals=np.zeros(len(day),dtype=bool)
+    if day.empty:return signals
+    prior_low=float(day.low.iloc[0])
+    for t in range(1,len(day)-1):
+        # Highest hundred whose upper edge is strictly below all earlier lows.
+        level=min((np.ceil((prior_low-2)/100)-1)*100, np.floor((float(day.high.iloc[t])+2)/100)*100)
+        if level>0 and day.low.iloc[t]<=level+2 and day.high.iloc[t]>=level-2:
+            signals[t+1]=True
+        prior_low=min(prior_low,float(day.low.iloc[t]))
+    return signals
+
+
 def entry_signals(day, rule):
     validate_rule("buy", rule)
+    if rule['type'] == 'rsi11_below':
+        return (day.rsi11 < rule['threshold']).shift(1, fill_value=False).to_numpy()
+    if rule['type'] == 'rsi11_reclaim':
+        signal = ((day.rsi11.shift(1) < 30) & (day.rsi11 >= 30)
+                  & (day.close > day.open) & (day.close > day.high.shift(1)))
+        return signal.shift(1, fill_value=False).to_numpy()
+    if rule['type'] == 'percent_drop':
+        minutes = rule['minutes']
+        # At entry i, inspect only completed candles i-minutes through i-1.
+        first_open = day.open.shift(minutes)
+        change = (first_open-day.close.shift(1))/first_open*100
+        stamps = pd.Series(day.index, index=day.index)
+        complete = stamps.diff().eq(pd.Timedelta(minutes=1)).rolling(minutes).sum().eq(minutes)
+        same_day = pd.Series(day.index.date, index=day.index).eq(pd.Series(day.index.date, index=day.index).shift(minutes))
+        return ((change.ge(rule['percent']) | np.isclose(change, rule['percent'], rtol=0, atol=1e-10))
+                & first_open.gt(0) & complete & same_day).fillna(False).to_numpy()
+    if rule['type'] in ('fixed_window_drop','five_minute_red5'):return fixed_time_signals(day,rule)
+    if rule['type']=='spx_first_round_touch':return spx_round_signals(day)
     if rule["type"] in ("rsi14_below3", "rsi14_below10"):
         threshold = 3 if rule["type"] == "rsi14_below3" else 10
         return (day.rsi14 < threshold).shift(1, fill_value=False).to_numpy()
@@ -491,7 +563,7 @@ def entry_signals(day, rule):
     return (first.shift(2, fill_value=False) & confirmation.shift(1, fill_value=False)).to_numpy()
 
 
-def exit_trade(day, entry, rule):
+def exit_trade(day, entry, rule, pricing=None):
     validate_rule("sell", rule)
     last = len(day) - 1
     if rule["type"] == "entry_gain":
@@ -502,10 +574,10 @@ def exit_trade(day, entry, rule):
     if rule["type"] in ("option_target_10", "option_bracket_10"):
         limit = min(entry + 9, last)
         for i in range(entry, limit + 1):
-            quote, _, _ = calculate_trade(float(day.open.iloc[entry]), float(day.close.iloc[i]), i - entry + 1)
-            if quote > 2.50 + 1e-10:
+            quote = pricing(i) / pricing.entry_quote if pricing else calculate_trade(float(day.open.iloc[entry]), float(day.close.iloc[i]), i - entry + 1)[0] / 2.0
+            if quote > 1.25 + 1e-10:
                 return i, float(day.close.iloc[i]), day.index[i] + pd.Timedelta(minutes=1), "option_target"
-            if rule["type"] == "option_bracket_10" and quote <= 1.70 + 1e-10:
+            if rule["type"] == "option_bracket_10" and quote <= .85 + 1e-10:
                 return i, float(day.close.iloc[i]), day.index[i] + pd.Timedelta(minutes=1), "option_stop"
         reason = "timeout_10" if entry + 9 <= last else "session_close"
         return limit, float(day.close.iloc[limit]), day.index[limit] + pd.Timedelta(minutes=1), reason
@@ -528,30 +600,40 @@ def calculate_trade(entry_price, exit_price, minutes):
     return option_exit, net, net / 200.0
 
 
-def backtest(bars, buy, sells):
+def backtest(bars, buy, sells, *, legacy=False):
     validate_rule("buy", buy["implementation"])
+    if buy['implementation']['type']=='spx_first_round_touch' and bars.attrs.get('symbol')!='SPX':
+        raise ValueError('SPX整数位只允许SPX指数数据，禁止用SPY代替')
     summaries, trades = [], []
-    sessions = [(day, np.flatnonzero(entry_signals(day, buy["implementation"])))
-                for _, day in bars.groupby(bars.index.date)]
+    prepared = [(day, None) for _, day in bars.groupby(bars.index.date)] if legacy else prepare_sessions(bars)
+    sessions = [(day, hv, np.flatnonzero(entry_signals(day, buy["implementation"]))) for day, hv in prepared]
     for sell in sells:
         rule = sell["implementation"]
         validate_rule("sell", rule)
         sample = []
-        for day, entries in sessions:
+        for day, hv, entries in sessions:
             busy_until = -1
             for entry in entries:
                 if entry <= busy_until:
                     continue
-                index, price, exit_time, reason = exit_trade(day, entry, rule)
+                pricing = None if legacy else trade_pricer(day, entry, hv, bars.attrs.get("symbol", "SPY"))
+                index, price, exit_time, reason = exit_trade(day, entry, rule, pricing)
                 busy_until = index
                 entry_time = day.index[entry]
                 minutes = (exit_time - entry_time).total_seconds() / 60
                 entry_price = float(day.open.iloc[entry])
-                option_exit, net, ret = calculate_trade(entry_price, price, minutes)
+                if legacy:
+                    option_exit, net, ret = calculate_trade(entry_price, price, minutes)
+                    details = {}
+                else:
+                    option_exit = pricing(index)
+                    net = (option_exit - pricing.entry_quote) * 100 - 2
+                    ret = net / (pricing.entry_quote * 100)
+                    details = pricing.details
                 sample.append(dict(sell_id=sell["id"], entry_time=entry_time.isoformat(),
                                    exit_time=exit_time.isoformat(), entry_price=entry_price,
                                    exit_price=price, minutes=minutes, exit_reason=reason,
-                                   option_exit=option_exit, net_profit=net, net_return=ret))
+                                   option_exit=option_exit, net_profit=net, net_return=ret, **details))
         trades.extend(sample)
         summaries.append(dict(sell_id=sell["id"], name=sell["name"], version=sell["version"],
                               trades=len(sample), mean_return=float(np.mean([t["net_return"] for t in sample])) if sample else None,
@@ -573,13 +655,16 @@ def run_pending():
             return {"completed": [], "errors": ["有卖出方法尚未实现，请先让 Codex 实现，再回测。"]}
         bars, source = load_data()
         completed, errors = [], []
-        code = {name: (store.ROOT / name).read_text() for name in ("engine.py", "store.py")}
+        code = code_snapshot()
         for buy in buys:
+            if (buy.get('implementation') or {}).get('type')=='spx_first_round_touch':continue
             try:
                 if not store.ready(buy):
                     raise ValueError("description 尚未实现，请让 Codex 读取并实现。")
-                summary, trades = backtest(bars, buy, sells)
-                snapshot = {"buy": buy.copy(), "sells": sells, "code": code}
+                removed=store.excluded('SPY',buy['id'])
+                active_sells=[s for s in sells if s['id'] not in removed]
+                summary, trades = backtest(bars, buy, active_sells)
+                snapshot = {"buy": buy.copy(), "sells": sells, "code": code, "excluded_sell_ids": sorted(removed)}
                 values = (store.now(), buy["id"], store.signature(buy, sells),
                           json.dumps(snapshot, ensure_ascii=False), json.dumps(source, ensure_ascii=False),
                           json.dumps(PARAMETERS), store.digest(code), json.dumps(summary, ensure_ascii=False), json.dumps(trades))

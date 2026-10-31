@@ -153,6 +153,12 @@ def register(idea_id, implementation):
         _write(items)
 
 
+def excluded(symbol, buy_id):
+    with connect() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS excluded_combinations(symbol TEXT,buy_id TEXT,sell_id TEXT,created TEXT,reason TEXT,evidence TEXT,PRIMARY KEY(symbol,buy_id,sell_id))")
+        return {r[0] for r in db.execute('SELECT sell_id FROM excluded_combinations WHERE symbol=? AND buy_id=?',(symbol,buy_id))}
+
+
 def latest(idea_id):
     with connect() as db:
         row = db.execute("SELECT * FROM runs WHERE idea_id=? ORDER BY id DESC LIMIT 1", (idea_id,)).fetchone()
@@ -161,4 +167,7 @@ def latest(idea_id):
     result = dict(row)
     for key in ("snapshot", "source", "parameters", "summary", "trades"):
         result[key] = json.loads(result[key])
+    removed=excluded('SPY',idea_id)
+    result['summary']=[x for x in result['summary'] if x['sell_id'] not in removed]
+    result['trades']=[x for x in result['trades'] if x['sell_id'] not in removed]
     return result

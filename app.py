@@ -3,6 +3,7 @@ import streamlit as st
 from collections import Counter
 
 import store
+import engine
 
 
 def profit_counts(run):
@@ -20,12 +21,26 @@ h3 {font-size: 1.15rem !important;}
 </style>""", unsafe_allow_html=True)
 store.initialize()
 st.title("Z-day-trading")
-page = st.radio("导航", ["结果", "想法", "想法库", "排名", "个股排名"], horizontal=True, label_visibility="collapsed")
+progress_file=store.HOME/'rebuild_20261030.json'
+if progress_file.exists():
+    import json
+    try:
+        progress=json.loads(progress_file.read_text())
+        if progress['state'] in ('running','waiting_data'):
+            st.caption(f"全部回测进行中 · {progress['detail']}")
+        elif progress['state']=='failed':st.warning(f"回测暂停：{progress['detail']}")
+    except (ValueError,KeyError):pass
+page = st.radio("导航", ["结果", "想法", "想法库", "排名", "个股排名", "交易"], horizontal=True, label_visibility="collapsed")
 items = store.ideas()
+research_code_hash = store.digest(engine.code_snapshot())
 buys = [x for x in items if x["kind"] == "buy"]
 sells = [x for x in items if x["kind"] == "sell"]
 
-if page == "想法":
+if page == "交易":
+    import trading_ui
+    trading_ui.render(items)
+
+elif page == "想法":
     kind_label = st.radio("想法类型", ["买入想法", "卖出方法"], horizontal=True, label_visibility="collapsed")
     kind = "buy" if kind_label == "买入想法" else "sell"
     choices = [x for x in items if x["kind"] == kind]
@@ -77,12 +92,13 @@ elif page == "个股排名":
         st.dataframe(table, hide_index=True, width="stretch", height=600,
                      column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
                                     "胜率": st.column_config.NumberColumn(format="%.1f%%")})
-        st.caption(r"平均单笔净收益排序 · 固定Delta 0.5、\$200/张、损耗\$1/分钟、往返费\$2；并非真实期权报价。不同股票沿用原规则的美元阈值。")
+        st.caption(r"平均单笔净收益排序 · 合成平值0DTE完整重定价 · 前20日历史波动率估算 · 往返费\$2；非真实期权收益。")
         st.caption("指标从数据起点预热；半日市在实际收盘退出。0笔不代表收益为0。")
     else:
         st.info("暂无有效个股结果，需完成回测；修改规则或数据后需重新运行。")
 
 elif page == "排名":
+    st.caption("合成平值0DTE · HV20完整重定价 · 前21个交易日预热 · 往返费2美元 · 非真实期权收益")
     st.subheader("SPY")
     rows = []
     ranking_source = None
@@ -90,7 +106,7 @@ elif page == "排名":
     for buy in buys:
         run = store.latest(buy["id"])
         if not (run and buy["realize"] and all(x["realize"] for x in sells)
-                and run["signature"] == store.signature(buy, sells)):
+                and run["engine_hash"] == research_code_hash and run["signature"] == store.signature(buy, sells)):
             continue
         ranking_source = run["source"]
         wins = profit_counts(run)
@@ -114,20 +130,23 @@ elif page == "排名":
     else:
         st.info("暂无有效回测结果，完成回测后显示排名。")
 
-    st.subheader("QQQ")
     import equities
-    qqq_rows = equities.ranking_rows(items, symbols=("QQQ",))
-    if qqq_rows:
-        st.caption("2025-10-23 — 2026-10-22 · IBKR正常交易时段1分钟数据")
-        qqq_table = pd.DataFrame(qqq_rows).drop(columns=["股票", "状态"])
-        qqq_table = qqq_table.sort_values("平均净收益率", ascending=False, kind="stable", na_position="last").reset_index(drop=True)
-        qqq_table.insert(0, "排名", range(1, len(qqq_table) + 1))
-        st.dataframe(qqq_table, hide_index=True, width="stretch", height=600,
-                     column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
-                                    "胜率": st.column_config.NumberColumn(format="%.1f%%")})
-        st.caption("同一组买入与卖出规则、同一费用模型；显示平均单笔净收益，不是真实期权报价。")
-    else:
-        st.info("QQQ 暂无有效回测结果。")
+    for ranked_symbol in ("QQQ", "SPX"):
+        st.subheader(ranked_symbol)
+        if ranked_symbol == "SPX":
+            st.warning("SPX使用合成平值0DTE模型及历史波动率；未使用真实期权报价、上市行权价或结算价。")
+        qqq_rows = equities.ranking_rows(items, symbols=(ranked_symbol,))
+        if qqq_rows:
+            st.caption("2025-10-23 — 2026-10-22 · IBKR正常交易时段1分钟数据")
+            qqq_table = pd.DataFrame(qqq_rows).drop(columns=["股票"] + ([] if ranked_symbol=="SPX" else ["状态"]))
+            qqq_table = qqq_table.sort_values("平均净收益率", ascending=False, kind="stable", na_position="last").reset_index(drop=True)
+            qqq_table.insert(0, "排名", range(1, len(qqq_table) + 1))
+            st.dataframe(qqq_table, hide_index=True, width="stretch", height=600,
+                         column_config={"平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
+                                        "胜率": st.column_config.NumberColumn(format="%.1f%%")})
+            st.caption("同一费用模型；平均单笔净收益，不是真实期权报价。SPX无成交量，VWAP类规则不适用。" if ranked_symbol=="SPX" else "同一组买入与卖出规则、同一费用模型；显示平均单笔净收益，不是真实期权报价。")
+        else:
+            st.info(f"{ranked_symbol} 暂无有效回测结果。")
 
 else:
     if not buys:
@@ -138,8 +157,11 @@ else:
     buy = lookup[selected]
     with st.expander("买入规则"):
         st.text(buy["description"])
+    if (buy.get('implementation') or {}).get('type')=='spx_first_round_touch':
+        st.info('此想法使用SPX指数，结果在「排名」页的SPX区域。')
+        st.stop()
     run = store.latest(selected)
-    fresh = run and buy["realize"] and all(x["realize"] for x in sells) and run["signature"] == store.signature(buy, sells)
+    fresh = run and run["engine_hash"] == research_code_hash and buy["realize"] and all(x["realize"] for x in sells) and run["signature"] == store.signature(buy, sells)
     if not run:
         st.info("这个想法尚无回测结果。请到「想法库」查看状态。")
     elif not fresh:
@@ -154,6 +176,8 @@ else:
             st.dataframe(historical, hide_index=True, column_config={
                 "平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
                 "胜率": st.column_config.NumberColumn(format="%.1f%%")})
+    elif not run['summary']:
+        st.info('该想法在SPY的旧买卖组合已全部按收益率/胜率条件移除。其他标的的组合分别保留。')
     else:
         source = run["source"]
         venue = "IBKR正常交易时段" if source.get("whatToShow") == "TRADES" else "Nasdaq 单一场所行情"
@@ -168,4 +192,4 @@ else:
         st.dataframe(table, hide_index=True, width="stretch", column_config={
             "平均净收益率": st.column_config.NumberColumn(format="%.2f%%"),
             "胜率": st.column_config.NumberColumn(format="%.1f%%")})
-        st.caption("固定 Delta 0.5 · 200 美元/张 · 每分钟损耗 1 美元 · 往返手续费 2 美元")
+        st.caption("BSM完整重定价 · 前20日历史波动率 · 动态入场权利金 · 往返费2美元 · 前21个交易日仅用于预热")
